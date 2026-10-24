@@ -1,13 +1,24 @@
 import { zipSync } from "fflate";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { splitFrontMatter } from "../markdown/frontmatter.ts";
+import { GitHubError } from "../repo/github.ts";
+import { getToken, onTokenChange } from "../repo/token.ts";
 import { CodeEditor } from "./CodeEditor.tsx";
 import { Explorer, fileIcon } from "./Explorer.tsx";
-import { FramePane } from "./FramePane.tsx";
+import { FramePane, PreviewPane } from "./FramePane.tsx";
 import type { Session } from "./session.ts";
+import { TokenDialog } from "./TokenDialog.tsx";
 
 type Mode = "visual" | "source";
+type View = "explorer" | "changes";
 const IMAGE = /\.(png|jpe?g|gif|webp|avif|svg|ico)$/i;
+/** Tabs for pages of the built site that aren't content files: "preview:/site/tags/" */
+const PREVIEW = "preview:";
+
+function previewTitle(tab: string): string {
+  const path = new URL(tab.slice(PREVIEW.length), location.origin).pathname.replace(/^\/site\/?/, "").replace(/\/$/, "");
+  return path || "home";
+}
 
 function useSession(session: Session) {
   const [, rerender] = useReducer((n: number) => n + 1, 0);
@@ -36,7 +47,14 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
   const [active, setActive] = useState<string | null>(null);
   const [modes, setModes] = useState<Record<string, Mode>>({});
   const [panelOpen, setPanelOpen] = useState(true);
-  const [menuOpen, setMenuOpen] = useState(false);
+  // The sidebar's view; clicking the active view's icon hides the sidebar, as in VS Code
+  const [view, setView] = useState<View | null>("explorer");
+  const [token, setTokenState] = useState(getToken);
+  useEffect(() => onTokenChange(() => setTokenState(getToken())), []);
+  const [tokenDialog, setTokenDialog] = useState<{ reason?: string; then?: () => void } | null>(null);
+  const [commitMessage, setCommitMessage] = useState("");
+  const [committing, setCommitting] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
   const [logOpen, setLogOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const modified = new Set(session.drafts.paths());
@@ -45,6 +63,16 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
     setTabs((current) => (current.includes(path) ? current : [...current, path]));
     setActive(path);
   }, []);
+
+  const navigate = useCallback(
+    (href: string) => {
+      const target = session.resolveLink(href);
+      if (target.kind === "page") open(target.path);
+      else if (target.kind === "preview") open(PREVIEW + target.url);
+      else window.open(target.href, "_blank", "noopener");
+    },
+    [session, open],
+  );
 
   // Start on the first post, so there's something to see
   useEffect(() => {
@@ -70,30 +98,57 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
     for (const path of session.drafts.paths()) files[path] = session.bytes(path)!;
     const name = `${session.repo.repo}-drafts-${new Date().toISOString().slice(0, 10)}.zip`;
     download(name, zipSync(files), "application/zip");
-    setMenuOpen(false);
   };
 
-  const copyMarkdown = async () => {
-    if (!active) return;
-    await navigator.clipboard.writeText(session.text(active));
-    setMenuOpen(false);
-    notify(`Copied ${active.split("/").pop()}`);
+  const copyMarkdown = async (path: string) => {
+    await navigator.clipboard.writeText(session.text(path));
+    notify(`Copied ${path.split("/").pop()}`);
   };
 
-  const discard = async () => {
-    if (!active) return;
-    await session.discard(active);
-    setMenuOpen(false);
-    notify(`Discarded changes to ${active.split("/").pop()}`);
+  const discard = async (path: string) => {
+    if (!confirm(`Discard your changes to ${path}? This can't be undone.`)) return;
+    await session.discard(path);
+    notify(`Discarded changes to ${path.split("/").pop()}`);
   };
+
+  const defaultMessage = () => {
+    const names = [...modified].map((path) => path.split("/").pop()!);
+    return names.length === 1 ? `Update ${names[0]}` : `Update ${names.length} files`;
+  };
+
+  const commit = async () => {
+    const { fullName, ref } = session.repo;
+    if (!getToken()) {
+      setTokenDialog({ reason: `To commit to ${fullName}, zdrafts needs a GitHub token that can write to it.`, then: commit });
+      return;
+    }
+    setCommitting(true);
+    setCommitError(null);
+    try {
+      const sha = await session.commit([...modified], commitMessage.trim() || defaultMessage());
+      setCommitMessage("");
+      notify(`Committed ${sha.slice(0, 7)} to ${ref}`);
+    } catch (error) {
+      const kind = error instanceof GitHubError ? error.kind : "other";
+      const message = error instanceof Error ? error.message : String(error);
+      if (kind === "unauthorized" || kind === "forbidden" || kind === "not-found") {
+        setTokenDialog({ reason: `${message} The token needs Contents: Read and write on ${fullName}.`, then: commit });
+      } else setCommitError(message);
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const toggleView = (next: View) => setView((current) => (current === next ? null : next));
 
   const mode: Mode = (active && modes[active]) || "visual";
   const isMarkdown = !!active && active.endsWith(".md");
+  const isPreview = !!active?.startsWith(PREVIEW);
   const status = session.status;
   const repoUrl = `https://github.com/${session.repo.owner}/${session.repo.repo}/tree/${session.repo.ref}`;
 
   return (
-    <div className="workbench">
+    <div className={`workbench${view ? "" : " sidebar-hidden"}`}>
       <header className="titlebar">
         <span className="brand">
           <span className="codicon codicon-edit" aria-hidden="true" />
@@ -104,40 +159,6 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
             {session.repo.owner}/{session.repo.repo} — {session.repo.ref}
           </a>
         </span>
-        <div style={{ position: "relative" }}>
-          <button className="icon-btn" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
-            <span className="codicon codicon-git-commit" aria-hidden="true" />
-            Changes
-            {modified.size > 0 && <span className="badge">{modified.size}</span>}
-          </button>
-          {menuOpen && (
-            <div className="menu" role="menu" style={{ right: 0, top: 30 }} onMouseLeave={() => setMenuOpen(false)}>
-              {modified.size === 0 ? (
-                <div className="menu-file" style={{ color: "var(--faint)" }}>
-                  No changes yet
-                </div>
-              ) : (
-                <div className="menu-files">
-                  {[...modified].map((path) => (
-                    <button key={path} className="menu-item menu-file" onClick={() => (open(path), setMenuOpen(false))}>
-                      {path}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="menu-sep" />
-              <button className="menu-item" role="menuitem" disabled={modified.size === 0} onClick={exportChanges}>
-                <span className="codicon codicon-desktop-download" aria-hidden="true" /> Download changed files (.zip)
-              </button>
-              <button className="menu-item" role="menuitem" disabled={!active} onClick={copyMarkdown}>
-                <span className="codicon codicon-copy" aria-hidden="true" /> Copy this file's markdown
-              </button>
-              <button className="menu-item" role="menuitem" disabled={!active || !modified.has(active)} onClick={discard}>
-                <span className="codicon codicon-discard" aria-hidden="true" /> Discard changes to this file
-              </button>
-            </div>
-          )}
-        </div>
         <button className="icon-btn" aria-pressed={panelOpen} title="Page settings (front matter)" onClick={() => setPanelOpen((v) => !v)}>
           <span className="codicon codicon-settings" aria-hidden="true" />
         </button>
@@ -147,12 +168,24 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
       </header>
 
       <nav className="activity" aria-label="Views">
-        <button className="active" title="Explorer" aria-current="true">
+        <button className={view === "explorer" ? "active" : ""} title="Explorer" aria-pressed={view === "explorer"} onClick={() => toggleView("explorer")}>
           <span className="codicon codicon-files" aria-hidden="true" />
+        </button>
+        <button
+          className={view === "changes" ? "active" : ""}
+          title={`Changes${modified.size ? ` (${modified.size})` : ""}`}
+          aria-pressed={view === "changes"}
+          onClick={() => toggleView("changes")}
+        >
+          <span className="codicon codicon-source-control" aria-hidden="true" />
+          {modified.size > 0 && <span className="badge activity-badge">{modified.size}</span>}
+        </button>
+        <button className="activity-bottom" title={token ? `GitHub: ${token.login}` : "Add a GitHub token"} onClick={() => setTokenDialog({})}>
+          <span className="codicon codicon-account" aria-hidden="true" />
         </button>
       </nav>
 
-      <aside className="sidebar">
+      <aside className="sidebar" hidden={view !== "explorer"}>
         <div className="sidebar-title">Explorer</div>
         <div className="section-header">
           <span className="codicon codicon-chevron-down" aria-hidden="true" />
@@ -160,11 +193,84 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
         </div>
         <Explorer paths={explorerPaths} selected={active} modified={modified} onOpen={open} />
       </aside>
+      {view === "changes" && (
+        <aside className="sidebar">
+          <div className="sidebar-title">
+            Changes
+            <span className="spacer" />
+            <button className="icon-btn" title="Download changed files (.zip)" disabled={modified.size === 0} onClick={exportChanges}>
+              <span className="codicon codicon-desktop-download" aria-hidden="true" />
+            </button>
+          </div>
+          <form
+            className="commit-box"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void commit();
+            }}
+          >
+            <textarea
+              aria-label="Commit message"
+              placeholder={modified.size ? `Message (${defaultMessage()})` : "Message"}
+              rows={2}
+              value={commitMessage}
+              onChange={(event) => setCommitMessage(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  void commit();
+                }
+              }}
+            />
+            <button type="submit" className="btn" disabled={modified.size === 0 || committing} title={`Commit and push to ${session.repo.fullName}`}>
+              <span className={`codicon ${committing ? "codicon-sync spin" : "codicon-check"}`} aria-hidden="true" />
+              {committing ? "Committing…" : `Commit to ${session.repo.ref}`}
+            </button>
+            {commitError && (
+              <div className="error-box" role="alert">
+                {commitError}
+              </div>
+            )}
+          </form>
+          <div className="section-header">
+            <span className="codicon codicon-chevron-down" aria-hidden="true" />
+            Drafts
+            {modified.size > 0 && <span className="badge">{modified.size}</span>}
+          </div>
+          {modified.size === 0 ? (
+            <div className="sidebar-note">No changes yet. Edits are kept in this browser until you download them.</div>
+          ) : (
+            <div className="changes" role="list">
+              {[...modified].map((path) => {
+                const icon = fileIcon(path);
+                const slash = path.lastIndexOf("/");
+                return (
+                  <div key={path} role="listitem" className={`change-row${path === active ? " selected" : ""}`} onClick={() => open(path)} title={path}>
+                    <span className={`file-icon codicon codicon-${icon.icon} ${icon.className}`} aria-hidden="true" />
+                    <span className="name">{path.slice(slash + 1)}</span>
+                    <span className="dir">{path.slice(0, slash)}</span>
+                    <span className="actions">
+                      <button className="icon-btn" title="Copy markdown" onClick={(event) => (event.stopPropagation(), void copyMarkdown(path))}>
+                        <span className="codicon codicon-copy" aria-hidden="true" />
+                      </button>
+                      <button className="icon-btn" title="Discard changes" onClick={(event) => (event.stopPropagation(), void discard(path))}>
+                        <span className="codicon codicon-discard" aria-hidden="true" />
+                      </button>
+                    </span>
+                    <span className="status">M</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </aside>
+      )}
 
       <section className="editor">
         <div className="tabs" role="tablist">
           {tabs.map((path) => {
-            const icon = fileIcon(path);
+            const preview = path.startsWith(PREVIEW);
+            const icon = preview ? { icon: "preview", className: "" } : fileIcon(path);
             return (
               <div
                 key={path}
@@ -176,7 +282,7 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
                 title={path}
               >
                 <span className={`codicon codicon-${icon.icon} ${icon.className}`} aria-hidden="true" />
-                <span className="name">{path.split("/").pop()}</span>
+                <span className="name">{preview ? previewTitle(path) : path.split("/").pop()}</span>
                 <button
                   className="close"
                   aria-label={`Close ${path}`}
@@ -193,7 +299,7 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
         </div>
         {active && (
           <div className="breadcrumbs">
-            <span className="crumbs">{active.split("/").join(" › ")}</span>
+            <span className="crumbs">{isPreview ? `Preview › ${previewTitle(active)} (generated by the theme, read-only)` : active.split("/").join(" › ")}</span>
             {isMarkdown && session.pages.has(active) && (
               <div className="mode-switch" role="group" aria-label="Editor mode">
                 {(["visual", "source"] as Mode[]).map((m) => (
@@ -206,7 +312,7 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
           </div>
         )}
         <div className="editor-body">
-          <EditorBody session={session} path={active} mode={mode} onNavigate={open} />
+          <EditorBody session={session} path={active} mode={mode} onNavigate={navigate} />
           {logOpen && status.state === "failed" && (
             <div className="log" role="log">
               {status.errors?.join("\n")}
@@ -222,10 +328,16 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
           <span className="codicon codicon-git-branch" aria-hidden="true" />
           {session.repo.ref}
         </span>
-        <span className="item">
-          <span className="codicon codicon-cloud-download" aria-hidden="true" />
-          read-only
-        </span>
+        <button className="item" onClick={() => setTokenDialog({})} title={token ? "GitHub token" : "Add a GitHub token to commit"}>
+          <span className="codicon codicon-account" aria-hidden="true" />
+          {token ? token.login : "No GitHub token"}
+        </button>
+        {session.repo.stale && (
+          <span className="item warning" title={session.repo.stale}>
+            <span className="codicon codicon-warning" aria-hidden="true" />
+            Not the latest commit
+          </span>
+        )}
         <span className="spacer" />
         <button className="item" onClick={() => setLogOpen((v) => !v)} title={status.state === "failed" ? "Show build errors" : "Zola build"}>
           {status.state === "building" && <span className="codicon codicon-sync spin" aria-hidden="true" />}
@@ -239,6 +351,19 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
           {session.theme.name}
         </span>
       </footer>
+      {tokenDialog && (
+        <TokenDialog
+          reason={tokenDialog.reason}
+          owner={session.repo.owner}
+          repo={session.repo.fullName}
+          onClose={() => setTokenDialog(null)}
+          onSaved={() => {
+            const then = tokenDialog.then;
+            setTokenDialog(null);
+            then?.();
+          }}
+        />
+      )}
       {toast && (
         <div className="toast" role="status">
           {toast}
@@ -248,7 +373,7 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
   );
 }
 
-function EditorBody({ session, path, mode, onNavigate }: { session: Session; path: string | null; mode: Mode; onNavigate: (path: string) => void }) {
+function EditorBody({ session, path, mode, onNavigate }: { session: Session; path: string | null; mode: Mode; onNavigate: (href: string) => void }) {
   const saveText = useMemo(() => debounce((p: string, text: string) => void session.saveText(p, text), 400), [session]);
   if (!path) {
     return (
@@ -259,6 +384,11 @@ function EditorBody({ session, path, mode, onNavigate }: { session: Session; pat
         </div>
       </div>
     );
+  }
+  if (path.startsWith(PREVIEW)) {
+    const url = new URL(path.slice(PREVIEW.length), location.origin);
+    url.searchParams.set("zdrafts-preview", "");
+    return <PreviewPane key={`${path}:${session.layoutVersion}`} url={url.pathname + url.search + url.hash} onNavigate={onNavigate} />;
   }
   if (IMAGE.test(path)) return <ImageView session={session} path={path} />;
   if (!path.endsWith(".md")) {

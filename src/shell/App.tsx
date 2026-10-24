@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GitHubError, parseRepoInput, type RepoRef } from "../repo/github.ts";
+import { GitHubError, parseRepoInput, type GitHubErrorKind, type RepoRef } from "../repo/github.ts";
 import { Intro } from "./Intro.tsx";
 import { Session, SiteError, UnsupportedThemeError, type OpenProgress } from "./session.ts";
 import { Workbench } from "./Workbench.tsx";
 
 type State =
-  | { screen: "intro"; error?: string }
+  | { screen: "intro"; error?: string; errorKind?: GitHubErrorKind; ref?: RepoRef }
   | { screen: "loading"; ref: RepoRef; progress: OpenProgress | null }
   | { screen: "workbench"; session: Session };
 
@@ -55,7 +55,12 @@ export function App() {
     } catch (error) {
       if (opening.current !== attempt) return;
       const known = error instanceof GitHubError || error instanceof SiteError || error instanceof UnsupportedThemeError;
-      setState({ screen: "intro", error: known ? (error as Error).message : `Something went wrong: ${(error as Error).message}` });
+      setState({
+        screen: "intro",
+        error: known ? (error as Error).message : `Something went wrong: ${(error as Error).message}`,
+        errorKind: error instanceof GitHubError ? error.kind : undefined,
+        ref,
+      });
     }
   }, []);
 
@@ -79,6 +84,8 @@ export function App() {
       recent={readRecent()}
       loading={state.screen === "loading" ? state : null}
       error={state.screen === "intro" ? state.error : undefined}
+      errorKind={state.screen === "intro" ? state.errorKind : undefined}
+      failed={state.screen === "intro" ? state.ref : undefined}
       onOpen={open}
     />
   );

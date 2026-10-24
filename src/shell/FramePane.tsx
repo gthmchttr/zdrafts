@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import type { FrameToShell, ShellToFrame } from "../frame/protocol.ts";
 import { splitFrontMatter } from "../markdown/frontmatter.ts";
 import type { Session } from "./session.ts";
-import { SITE_PREFIX } from "./site-cache.ts";
 
 export function FramePane({
   session,
@@ -15,7 +14,8 @@ export function FramePane({
   session: Session;
   path: string;
   url: string;
-  onNavigate: (path: string) => void;
+  /** A link in the page was clicked */
+  onNavigate: (href: string) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [loading, setLoading] = useState(true);
@@ -50,17 +50,9 @@ export function FramePane({
           send({ type: "probe-result", id: message.id, results: [...results] });
           break;
         }
-        case "navigate": {
-          const target = new URL(message.href, location.href);
-          if (target.origin !== location.origin || !target.pathname.startsWith(`${SITE_PREFIX}/`)) {
-            window.open(target.href, "_blank", "noopener");
-            return;
-          }
-          const output = target.pathname.slice(SITE_PREFIX.length + 1).replace(/\/?$/, "/").replace(/^\//, "") + "index.html";
-          const page = [...session.pages].find(([, out]) => out === output || out === output.replace(/^\/?index\.html$/, "index.html"));
-          if (page) onNavigate(page[0]);
+        case "navigate":
+          onNavigate(message.href);
           break;
-        }
       }
     };
     window.addEventListener("message", onMessage);
@@ -77,4 +69,18 @@ export function FramePane({
       )}
     </>
   );
+}
+
+/** A generated page (taxonomies, search…) as the site shows it, read-only */
+export function PreviewPane({ url, onNavigate }: { url: string; onNavigate: (href: string) => void }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent<FrameToShell>) => {
+      if (event.source !== frame.current?.contentWindow || event.origin !== location.origin) return;
+      if (event.data.type === "navigate") onNavigate(event.data.href);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [onNavigate]);
+  return <iframe ref={frame} src={url} title={`Preview of ${url}`} />;
 }

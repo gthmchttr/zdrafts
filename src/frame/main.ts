@@ -46,6 +46,7 @@ async function main() {
     (event) => {
       const link = (event.target as Element).closest("a[href]") as HTMLAnchorElement | null;
       if (!link || root.contains(link) || event.defaultPrevented) return;
+      if (link.pathname === location.pathname && link.hash) return; // within the page
       event.preventDefault();
       post({ type: "navigate", href: link.href });
     },

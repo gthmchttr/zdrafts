@@ -3,8 +3,10 @@
 // Browsers can't download GitHub's archives (codeload only allows GitHub's own origin), so this
 // lists files with the Git Trees API (CORS-enabled, 60 requests/hour unauthenticated: ~3 per
 // load) and downloads each from raw.githubusercontent.com (CORS-enabled, not rate-limited).
-// Files are cached in IndexedDB by git blob SHA, so a reload only downloads what changed.
-import { createStore, getMany, setMany } from "idb-keyval";
+// Files are cached in IndexedDB by git blob SHA and trees by commit, so a reload only asks GitHub
+// for the branch's latest commit and downloads what changed.
+import { createStore, get, getMany, set, setMany } from "idb-keyval";
+import { getToken } from "./token.ts";
 
 export interface RepoRef {
   owner: string;
@@ -27,12 +29,18 @@ export interface RepoEntry {
 export interface LoadedRepo {
   owner: string;
   repo: string;
+  /** "owner/repo" as GitHub spells it */
+  fullName: string;
+  private: boolean;
   ref: string;
+  /** The commit loaded; moves forward when zdrafts commits */
   commit: string;
   entries: RepoEntry[];
   files: Map<string, Uint8Array>;
   /** Submodules, keyed by their path in the repository */
   submodules: Map<string, { source: string; commit: string }>;
+  /** Set when GitHub couldn't be asked for the latest commit and the last one seen was used */
+  stale?: string;
 }
 
 export type Progress =
@@ -40,7 +48,25 @@ export type Progress =
   | { stage: "downloading"; done: number; total: number; bytes: number }
   | { stage: "done" };
 
-export class GitHubError extends Error {}
+/** What went wrong, so the UI can offer a token where one would help */
+export type GitHubErrorKind = "rate-limit" | "not-found" | "unauthorized" | "forbidden" | "conflict" | "other";
+
+export class GitHubError extends Error {
+  constructor(
+    message: string,
+    readonly kind: GitHubErrorKind = "other",
+  ) {
+    super(message);
+  }
+}
+
+/** The branch and commit last loaded for a repository input, to fall back on */
+interface Head {
+  fullName: string;
+  private: boolean;
+  branch: string;
+  commit: string;
+}
 
 const API = "https://api.github.com";
 const RAW = "https://raw.githubusercontent.com";
@@ -48,6 +74,7 @@ const RAW = "https://raw.githubusercontent.com";
 const SKIP = /^(\.git|\.github\/|public\/|node_modules\/)|(^|\/)\.DS_Store$/;
 
 const blobStore = typeof indexedDB === "undefined" ? undefined : createStore("zdrafts-blobs", "blobs");
+const treeStore = typeof indexedDB === "undefined" ? undefined : createStore("zdrafts-trees", "trees");
 
 /** "owner/repo", "owner/repo@ref" or a github.com URL (…/tree/<ref> included) */
 export function parseRepoInput(input: string): RepoRef | null {
@@ -59,16 +86,45 @@ export function parseRepoInput(input: string): RepoRef | null {
   return null;
 }
 
-async function api<T>(path: string): Promise<T> {
-  const response = await fetch(`${API}${path}`, { headers: { Accept: "application/vnd.github+json" } });
-  if (response.ok) return response.json() as Promise<T>;
+/** A GitHub API request, with the user's token when there is one */
+export async function githubFetch(path: string, init: RequestInit = {}, accept = "application/vnd.github+json"): Promise<Response> {
+  const token = getToken();
+  const headers = new Headers(init.headers);
+  headers.set("Accept", accept);
+  headers.set("X-GitHub-Api-Version", "2022-11-28");
+  if (token) headers.set("Authorization", `Bearer ${token.token}`);
+  const response = await fetch(`${API}${path}`, { ...init, headers });
+  if (response.ok) return response;
+
+  const detail = await response
+    .json()
+    .then((body: { message?: string }) => body.message ?? "")
+    .catch(() => "");
   if ((response.status === 403 || response.status === 429) && response.headers.get("x-ratelimit-remaining") === "0") {
     const reset = Number(response.headers.get("x-ratelimit-reset")) * 1000;
     const at = reset ? ` (resets at ${new Date(reset).toLocaleTimeString()})` : "";
-    throw new GitHubError(`GitHub's API limit for unauthenticated requests is used up${at}. Try again later.`);
+    throw new GitHubError(
+      token ? `GitHub's API limit for your token is used up${at}.` : `GitHub's limit for requests without a token is used up${at}.`,
+      "rate-limit",
+    );
   }
-  if (response.status === 404) throw new GitHubError(`Not found on GitHub: ${path.split("/").slice(2, 4).join("/")} (only public repositories can be opened)`);
-  throw new GitHubError(`GitHub API ${path}: HTTP ${response.status}`);
+  if (response.status === 401) throw new GitHubError("GitHub didn't accept the token: it may have expired or been revoked.", "unauthorized");
+  if (response.status === 404) {
+    const repo = path.split("/").slice(2, 4).join("/");
+    throw new GitHubError(
+      token
+        ? `Not found on GitHub: ${repo}. If it's private, the token needs access to it.`
+        : `Not found on GitHub: ${repo}. If it's a private repository, add a GitHub token.`,
+      "not-found",
+    );
+  }
+  if (response.status === 403) throw new GitHubError(`GitHub refused: ${detail || "the token doesn't have permission for this"}.`, "forbidden");
+  if (response.status === 409 || response.status === 422) throw new GitHubError(`GitHub: ${detail || `HTTP ${response.status}`}`, "conflict");
+  throw new GitHubError(`GitHub API ${path}: HTTP ${response.status}${detail ? ` (${detail})` : ""}`);
+}
+
+export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await githubFetch(path, init)).json() as Promise<T>;
 }
 
 interface TreeResponse {
@@ -77,21 +133,63 @@ interface TreeResponse {
   tree: { path: string; type: "blob" | "tree" | "commit"; sha: string; size?: number }[];
 }
 
-async function listTree(source: string, commit: string) {
+async function listTree(source: string, commit: string): Promise<TreeResponse["tree"]> {
+  // A commit's tree never changes
+  const key = `${source}@${commit}`;
+  const cached = treeStore && (await get<TreeResponse["tree"]>(key, treeStore).catch(() => undefined));
+  if (cached) return cached;
   const tree = await api<TreeResponse>(`/repos/${source}/git/trees/${commit}?recursive=1`);
   if (tree.truncated) throw new GitHubError(`${source} has too many files for GitHub's tree API`);
+  if (treeStore) await set(key, tree.tree, treeStore).catch(() => {});
   return tree.tree;
 }
 
-async function raw(source: string, commit: string, path: string): Promise<Uint8Array> {
+/** The branch to load and its latest commit: one API call when the repository was loaded before */
+async function resolveHead(ref: RepoRef): Promise<Head & { stale?: string }> {
+  const name = `${ref.owner}/${ref.repo}`;
+  const key = `head:${name}@${ref.ref ?? ""}`;
+  const last = treeStore && (await get<Head>(key, treeStore).catch(() => undefined));
+  try {
+    // The default branch hardly ever changes, so it's looked up once
+    const info = last && !ref.ref
+      ? { full_name: last.fullName, default_branch: last.branch, private: last.private }
+      : await api<{ default_branch: string; full_name: string; private: boolean }>(`/repos/${name}`);
+    const branch = ref.ref ?? info.default_branch;
+    const { sha } = await api<{ sha: string }>(`/repos/${info.full_name}/commits/${encodeURIComponent(branch)}`);
+    const head = { fullName: info.full_name, private: info.private, branch, commit: sha };
+    if (treeStore) await set(key, head, treeStore).catch(() => {});
+    return head;
+  } catch (error) {
+    if (!(error instanceof GitHubError && error.kind === "rate-limit") || !last) throw error;
+    return { ...last, stale: `${error.message} Showing ${last.branch} as last loaded (${last.commit.slice(0, 7)}).` };
+  }
+}
+
+/** Sources (owner/repo) whose files raw.githubusercontent.com can't serve: private repositories */
+const privateSources = new Set<string>();
+
+/**
+ * A file's contents. Public files come from raw.githubusercontent.com; that doesn't accept tokens
+ * from browsers (its CORS preflight refuses Authorization), so private ones come from the API.
+ */
+async function raw(source: string, commit: string, path: string, sha: string): Promise<Uint8Array> {
   const url = `${RAW}/${source}/${commit}/${path.split("/").map(encodeURIComponent).join("/")}`;
   for (let attempt = 0; ; attempt++) {
     try {
+      if (privateSources.has(source)) {
+        const response = await githubFetch(`/repos/${source}/git/blobs/${sha}`, {}, "application/vnd.github.raw");
+        return new Uint8Array(await response.arrayBuffer());
+      }
       const response = await fetch(url);
+      // A private submodule: try again through the API
+      if (response.status === 404 && getToken()) {
+        privateSources.add(source);
+        continue;
+      }
       if (!response.ok) throw new GitHubError(`${source}/${path}: HTTP ${response.status}`);
       return new Uint8Array(await response.arrayBuffer());
     } catch (error) {
-      if (attempt >= 2) throw error;
+      if (attempt >= 2 || (error instanceof GitHubError && error.kind !== "other")) throw error;
       await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
     }
   }
@@ -112,16 +210,18 @@ function parseGitmodules(text: string): Map<string, string> {
 export async function loadRepo(ref: RepoRef, onProgress: (progress: Progress) => void): Promise<LoadedRepo> {
   const name = `${ref.owner}/${ref.repo}`;
   onProgress({ stage: "listing", detail: `Looking up ${name}` });
-  const info = await api<{ default_branch: string; full_name: string }>(`/repos/${name}`);
-  const branch = ref.ref ?? info.default_branch;
-  const { sha: commit } = await api<{ sha: string }>(`/repos/${info.full_name}/commits/${encodeURIComponent(branch)}`);
+  const head = await resolveHead(ref);
+  const { fullName, branch, commit, stale } = head;
+  if (head.private) privateSources.add(fullName);
+  const info = { full_name: fullName };
 
   onProgress({ stage: "listing", detail: `Listing files in ${info.full_name}@${branch}` });
   const entries: RepoEntry[] = [];
   const submodules = new Map<string, { source: string; commit: string }>();
   const tree = await listTree(info.full_name, commit);
   const submoduleCommits = tree.filter((item) => item.type === "commit");
-  const gitmodules = submoduleCommits.length ? new TextDecoder().decode(await raw(info.full_name, commit, ".gitmodules")) : "";
+  const gitmodulesEntry = tree.find((item) => item.path === ".gitmodules");
+  const gitmodules = submoduleCommits.length && gitmodulesEntry ? new TextDecoder().decode(await raw(info.full_name, commit, ".gitmodules", gitmodulesEntry.sha)) : "";
   const submoduleSources = parseGitmodules(gitmodules);
 
   for (const item of tree) {
@@ -143,7 +243,7 @@ export async function loadRepo(ref: RepoRef, onProgress: (progress: Progress) =>
 
   const files = await downloadEntries(entries, onProgress);
   onProgress({ stage: "done" });
-  return { owner: ref.owner, repo: ref.repo, ref: branch, commit, entries, files, submodules };
+  return { owner: ref.owner, repo: ref.repo, fullName, private: head.private, ref: branch, commit, entries, files, submodules, stale };
 }
 
 async function downloadEntries(entries: RepoEntry[], onProgress: (progress: Progress) => void) {
@@ -165,7 +265,7 @@ async function downloadEntries(entries: RepoEntry[], onProgress: (progress: Prog
   await Promise.all(
     Array.from({ length: Math.min(24, queue.length) }, async () => {
       for (let entry = queue.shift(); entry; entry = queue.shift()) {
-        const data = await raw(entry.source, entry.commit, entry.sourcePath);
+        const data = await raw(entry.source, entry.commit, entry.sourcePath, entry.sha);
         files.set(entry.path, data);
         fresh.push([entry.sha, data]);
         done++;

@@ -1,6 +1,23 @@
-import { useState, type FormEvent } from "react";
-import { parseRepoInput, type RepoRef } from "../repo/github.ts";
+import { useEffect, useState, type FormEvent } from "react";
+import { parseRepoInput, type GitHubErrorKind, type RepoRef } from "../repo/github.ts";
+import { getToken, onTokenChange } from "../repo/token.ts";
 import type { OpenProgress } from "./session.ts";
+import { TokenDialog } from "./TokenDialog.tsx";
+
+/** Why a token would help after a failed load, or null if it wouldn't */
+function tokenReason(kind: GitHubErrorKind | undefined, repo: string): string | null {
+  switch (kind) {
+    case "rate-limit":
+      return `GitHub limits requests without a token to 60 an hour. With a token, zdrafts can open ${repo} right away.`;
+    case "not-found":
+      return `If ${repo} is private, zdrafts needs a token with access to it.`;
+    case "unauthorized":
+    case "forbidden":
+      return "The saved token didn't work for this repository. Add one that has access to it.";
+    default:
+      return null;
+  }
+}
 
 const EXAMPLE = "gthmchttr/gthmchttr.com";
 
@@ -25,15 +42,25 @@ export function Intro({
   recent,
   loading,
   error,
+  errorKind,
+  failed,
   onOpen,
 }: {
   recent: string[];
   loading: { ref: RepoRef; progress: OpenProgress | null } | null;
   error?: string;
+  errorKind?: GitHubErrorKind;
+  /** The repository that failed to open */
+  failed?: RepoRef;
   onOpen: (ref: RepoRef) => void;
 }) {
   const [input, setInput] = useState("");
   const [invalid, setInvalid] = useState(false);
+  const [dialog, setDialog] = useState<{ reason?: string; retry?: RepoRef } | null>(null);
+  const [token, setTokenState] = useState(getToken);
+  useEffect(() => onTokenChange(() => setTokenState(getToken())), []);
+  const failedName = failed ? `${failed.owner}/${failed.repo}` : "";
+  const reason = failed ? tokenReason(errorKind, failedName) : null;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -52,8 +79,8 @@ export function Intro({
           zdrafts
         </h1>
         <p className="lead">
-          Edit a Zola site's pages right in your browser, in the site's own look. Paste a public GitHub repository: it loads
-          read-only, and your edits stay here as drafts you can export.
+          Edit a Zola site's pages right in your browser, in the site's own look. Paste a GitHub repository: your edits stay here
+          as drafts until you commit them or download them.
         </p>
         <form onSubmit={submit}>
           <input
@@ -70,7 +97,13 @@ export function Intro({
           </button>
         </form>
         <div className="hint">
-          {invalid ? "That doesn't look like a GitHub repository." : "Public repositories only, for now. Supported theme: zola-yolk on Zola 0.23."}
+          {invalid ? "That doesn't look like a GitHub repository." : "Supported theme: zola-yolk on Zola 0.23. "}
+          {!invalid && (
+            <button type="button" className="link-btn" onClick={() => setDialog({})}>
+              {token ? `GitHub token: ${token.login}` : "Add a GitHub token"}
+            </button>
+          )}
+          {!invalid && !token && " for private repositories and committing."}
         </div>
 
         {status && (
@@ -87,7 +120,27 @@ export function Intro({
         {error && !loading && (
           <div className="error-box" role="alert">
             {error}
+            {reason && (
+              <div className="error-actions">
+                <button type="button" className="btn" onClick={() => setDialog({ reason, retry: failed })}>
+                  {token ? "Use another token" : "Add a GitHub token"}
+                </button>
+              </div>
+            )}
           </div>
+        )}
+        {dialog && (
+          <TokenDialog
+            reason={dialog.reason}
+            owner={dialog.retry?.owner}
+            repo={dialog.retry ? `${dialog.retry.owner}/${dialog.retry.repo}` : undefined}
+            onClose={() => setDialog(null)}
+            onSaved={() => {
+              const retry = dialog.retry;
+              setDialog(null);
+              if (retry) onOpen(retry);
+            }}
+          />
         )}
 
         {!loading && (

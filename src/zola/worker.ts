@@ -7,7 +7,7 @@
 import type { WorkerRequest, WorkerResponse } from "./protocol.ts";
 
 interface Zola {
-  build(options: { files: Map<string, Uint8Array>; baseUrl?: string }): Promise<{
+  build(options: { files: Map<string, Uint8Array>; baseUrl?: string; drafts?: boolean }): Promise<{
     ok: boolean;
     exitCode: number;
     files: Map<string, Uint8Array>;
@@ -43,7 +43,8 @@ self.onmessage = async ({ data }: MessageEvent<WorkerRequest>) => {
     }
     for (const [path, value] of processed) if (!files.has(path)) files.set(path, value);
     const started = performance.now();
-    const result = await (await zola!).build({ files, baseUrl: data.baseUrl });
+    // Draft pages (draft = true) are what people edit most, so they're always built
+    const result = await (await zola!).build({ files, baseUrl: data.baseUrl, drafts: true });
     if (result.ok) {
       for (const [path, value] of result.files) {
         // A copy: the output buffers are transferred to the page below

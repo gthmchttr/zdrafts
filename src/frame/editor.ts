@@ -3,10 +3,10 @@ import { defaultValueCtx, Editor, editorViewCtx, parserCtx, remarkStringifyOptio
 import { clipboard } from "@milkdown/kit/plugin/clipboard";
 import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
-import { commonmark } from "@milkdown/kit/preset/commonmark";
+import { commonmark, imageSchema } from "@milkdown/kit/preset/commonmark";
 import { gfm, insertTableCommand, remarkGFMPlugin } from "@milkdown/kit/preset/gfm";
 import { callCommand } from "@milkdown/kit/utils";
-import { preserveSource } from "../markdown/preserve.ts";
+import { preserveSource, splitBlocks } from "../markdown/preserve.ts";
 import { zolaHandlers } from "../markdown/remark-zola.ts";
 import { encodeTera } from "../markdown/tera.ts";
 import type { ComponentInfo } from "../zola/components.ts";
@@ -18,6 +18,21 @@ import { openComponentSettings, openImageForm, openLinkForm, type SettingsEnv } 
 import { slashItems, slashPlugin, type SlashItem } from "./slash.ts";
 
 type DocMessage = Extract<ShellToFrame, { type: "doc" }>;
+
+// Milkdown 7.22 passes Markdown's null image title to an attribute that must be a string, which
+// stops parsing at the first image without a title: ![alt](src)
+const image = imageSchema.extendSchema((schema) => (ctx) => {
+  const spec = schema(ctx);
+  return {
+    ...spec,
+    parseMarkdown: {
+      ...spec.parseMarkdown,
+      runner: (state, node, type) => {
+        state.addNode(type, { src: String(node.url ?? ""), alt: String(node.alt ?? ""), title: String(node.title ?? "") });
+      },
+    },
+  };
+});
 
 export async function createEditor(root: HTMLElement, message: DocMessage, post: (message: FrameToShell) => void, probes: Probes) {
   const doc = root.ownerDocument;
@@ -78,6 +93,7 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
       });
     })
     .use(commonmark)
+    .use(image)
     .use(gfm)
     .config((ctx) => ctx.set(remarkGFMPlugin.options.key, { tablePipeAlign: false }))
     .use(history)
@@ -97,6 +113,16 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
     ctx.update(parserCtx, (parse) => ((markdown: string) => parse(encodeTera(markdown))) as typeof parse);
     const view = ctx.get(editorViewCtx);
     baseline = ctx.get(serializerCtx)(view.state.doc);
+    // If the editor couldn't read the whole page, editing it could lose the rest: don't allow it
+    const expected = splitBlocks(message.body)?.length;
+    const got = splitBlocks(baseline)?.length;
+    if (expected !== undefined && got !== undefined && got < expected) {
+      view.setProps({ editable: () => false });
+      const note = doc.createElement("p");
+      note.className = "zd-error";
+      note.textContent = `zdrafts could only read ${got} of this page's ${expected} blocks, so editing is off here. Use the Source view to edit it.`;
+      root.before(note);
+    }
     probes.onChange(() => view.dispatch(view.state.tr.setMeta(probeRefreshKey, probes.version)));
   });
 

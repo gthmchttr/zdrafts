@@ -1,6 +1,7 @@
 // An open site: its files, drafts, Zola builds, page locations and component probes.
 import { DraftStore } from "../drafts.ts";
 import { joinFrontMatter, splitFrontMatter } from "../markdown/frontmatter.ts";
+import { commitFiles } from "../repo/commit.ts";
 import { loadRepo, type LoadedRepo, type Progress, type RepoRef } from "../repo/github.ts";
 import { inspectSite, SiteError, type SiteInfo } from "../repo/site.ts";
 import { findTheme, type ThemeAdapter } from "../themes/index.ts";
@@ -142,6 +143,19 @@ export class Session {
     if (splitFrontMatter(this.text(path)).frontMatter !== before) this.scheduleRebuild();
   }
 
+  /** Commit the drafts of `paths` to the branch; they become the files' new originals */
+  async commit(paths: string[], message: string): Promise<string> {
+    const files = new Map(paths.map((path) => [path, this.text(path)]));
+    const sha = await commitFiles({ fullName: this.repo.fullName, branch: this.repo.ref, base: this.repo.commit, files, message });
+    this.repo.commit = sha;
+    for (const [path, text] of files) {
+      this.repo.files.set(path, encoder.encode(text));
+      await this.drafts.discard(path);
+    }
+    this.emit();
+    return sha;
+  }
+
   /** Rebuild because pages' front matter changed: open pages reload once it's done */
   scheduleRebuild() {
     this.layoutDirty = true;
@@ -243,6 +257,23 @@ export class Session {
     if (!output) return null;
     const url = `${SITE_PREFIX}/${output.replace(/index\.html$/, "")}`;
     return edit ? `${url}?zdrafts-edit=${encodeURIComponent(path)}` : url;
+  }
+
+  /**
+   * Where a link clicked in the site leads: one of its content pages, another page of the built
+   * site (shown as a preview: taxonomies, search…), or somewhere outside it.
+   */
+  resolveLink(href: string): { kind: "page"; path: string } | { kind: "preview"; url: string } | { kind: "external"; href: string } {
+    const target = new URL(href, location.href);
+    if (target.origin !== location.origin) return { kind: "external", href: target.href };
+    // The site is built for /site/, but themes and menus often link root-relative ("/posts")
+    const inSite = target.pathname === SITE_PREFIX || target.pathname.startsWith(`${SITE_PREFIX}/`);
+    const sitePath = (inSite ? target.pathname.slice(SITE_PREFIX.length) : target.pathname).replace(/^\/?/, "/");
+    const last = sitePath.split("/").pop()!;
+    if (/\.(?!html$)\w+$/.test(last)) return { kind: "external", href: `${SITE_PREFIX}${sitePath}` }; // feeds, files
+    const output = (last.endsWith(".html") ? sitePath : sitePath.replace(/\/?$/, "/index.html")).slice(1);
+    for (const [path, out] of this.pages) if (out === output) return { kind: "page", path };
+    return { kind: "preview", url: `${SITE_PREFIX}${sitePath}${target.search}${target.hash}` };
   }
 
   dispose() {

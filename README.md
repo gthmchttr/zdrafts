@@ -12,13 +12,33 @@ rendered by the theme and edited inline.
   headings (`/head`, `/h2`), tables, images, links and the theme's components (`/border`).
 - A settings popover per component (the handle on hover) for its arguments.
 - Page settings (front matter) and a Source view per file.
-- Edits are kept as drafts in the browser (IndexedDB) per repository, marked in the explorer, and
-  exported as a zip of changed files or copied as Markdown. Nothing is written back to GitHub yet.
+- Edits are kept as drafts in the browser (IndexedDB) per repository, marked in the explorer and
+  listed in the Changes view, where they can be committed to the branch, downloaded as a zip,
+  copied as Markdown or discarded.
+- Links in the page open their page in zdrafts: content pages in the editor, generated pages
+  (tags, search…) as read-only previews. Draft pages (`draft = true`) are built too.
 - Saving keeps the file's own formatting: only the blocks you edited are rewritten.
+
+## GitHub token
+
+Public repositories open without one. A token is asked for when it's needed: to commit, to open a
+private repository, or when GitHub's limit of 60 requests an hour without a token is used up.
+Opening a site costs one request when it was opened before, four the first time.
+
+Use a [fine-grained token](https://github.com/settings/personal-access-tokens/new?name=zdrafts&contents=write)
+with access to only the site's repository and *Contents: Read and write*. zdrafts commits with
+the Git Data API and fast-forwards the branch, never force-pushes, and refuses to commit when
+newer commits on the branch changed the same files.
+
+The token stays in the browser (localStorage when "Remember" is ticked, otherwise until the tab
+closes) and is only sent to api.github.com. Anything running on zdrafts' origin can read it,
+including the site's pages shown in the editor, which is why the service worker serves them with a
+Content-Security-Policy that blocks other origins' scripts and requests. For stronger isolation,
+serve the built site from a separate origin (not done yet).
 
 ## Status
 
-Early. Read-only, public repositories only, and only tested setups are allowed:
+Early. Only tested setups are allowed:
 
 | | Supported |
 | --- | --- |
@@ -32,8 +52,9 @@ Known limitations:
 - Inline HTML in Markdown (e.g. `<u>…</u>`) shows as literal text.
 - Components that transform their body (zola-yolk's `render`: Mermaid, math) are edited as source
   next to a preview.
-- Unauthenticated GitHub API: 60 repository loads per hour per IP. File contents come from
-  `raw.githubusercontent.com` and are cached in IndexedDB by blob SHA.
+- File contents come from `raw.githubusercontent.com` (public) or the API's blob endpoint
+  (private repositories) and are cached in IndexedDB by blob SHA.
+- Only edits to existing pages can be committed; creating, deleting and renaming files isn't supported yet.
 
 ## Development
 
