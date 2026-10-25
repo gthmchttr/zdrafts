@@ -8,6 +8,7 @@ import { unified } from "unified";
 import { describe, expect, test } from "vitest";
 import { splitFrontMatter } from "../src/markdown/frontmatter.ts";
 import { preserveSource, splitBlocks } from "../src/markdown/preserve.ts";
+import { htmlHandlers, htmlJoin, remarkHtml } from "../src/markdown/remark-html.ts";
 import { remarkZola, zolaHandlers } from "../src/markdown/remark-zola.ts";
 import { encodeTera } from "../src/markdown/tera.ts";
 
@@ -32,9 +33,10 @@ const files = [
 // Stands in for Milkdown's serializer, which normalizes the same way
 const processor = unified()
   .use(remarkParse)
-  .use(remarkStringify, { handlers: zolaHandlers, encode: [], bullet: "-", rule: "-" } as never)
+  .use(remarkStringify, { handlers: { ...zolaHandlers, ...htmlHandlers }, join: [htmlJoin], encode: [], bullet: "-", rule: "-" } as never)
   .use(remarkGfm)
-  .use(remarkZola);
+  .use(remarkZola)
+  .use(remarkHtml);
 const serialize = (body: string) => processor.stringify(processor.runSync(processor.parse(encodeTera(body))) as Root);
 
 /** Lines of `b` that aren't in `a` and the other way round, as a rough line diff */

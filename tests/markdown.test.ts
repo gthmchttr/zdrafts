@@ -7,6 +7,7 @@ import remarkStringify from "remark-stringify";
 import { unified } from "unified";
 import { describe, expect, test } from "vitest";
 import { joinFrontMatter, splitFrontMatter } from "../src/markdown/frontmatter.ts";
+import { htmlHandlers, htmlJoin, remarkHtml } from "../src/markdown/remark-html.ts";
 import { remarkZola, zolaHandlers } from "../src/markdown/remark-zola.ts";
 import { decodePlaceholder, decodeTera, encodeTera, parseAttrs, PLACEHOLDER, setStringAttr } from "../src/markdown/tera.ts";
 
@@ -31,9 +32,10 @@ const files = [
 // The same pipeline as Milkdown: remark-parse + remark-stringify, then plugins
 const processor = unified()
   .use(remarkParse)
-  .use(remarkStringify, { handlers: zolaHandlers, encode: [] } as never)
+  .use(remarkStringify, { handlers: { ...zolaHandlers, ...htmlHandlers }, join: [htmlJoin], encode: [] } as never)
   .use(remarkGfm)
-  .use(remarkZola);
+  .use(remarkZola)
+  .use(remarkHtml);
 
 const parse = (body: string) => processor.runSync(processor.parse(encodeTera(body))) as Root;
 const stringify = (tree: Root) => processor.stringify(tree);
@@ -138,5 +140,56 @@ describe("component arguments", () => {
       const attrs = parseAttrs(args.replace(/\s*\/$/, ""));
       for (const attr of attrs) expect(attr.kind).not.toBe("spread");
     }
+  });
+});
+
+describe("html", () => {
+  const types = (tree: Root) => collect(tree, ["htmlContainer", "htmlInline", "html"]).map((t) => t.split(":")[0]);
+  const same = (body: string) => expect(stringify(parse(body))).toBe(body);
+
+  test("inline tags become elements and are written back as they were", () => {
+    const body = "Edit <u>zola.toml</u> and press <kbd>Ctrl</kbd> + <kbd>S</kbd>.\n";
+    expect(types(parse(body))).toEqual(["htmlInline", "htmlInline", "htmlInline"]);
+    same(body);
+  });
+
+  test("colour and highlight, nested, with Markdown inside", () => {
+    const body = 'A <span style="color: #e5484d"><mark>red **bold**</mark></span> word.\n';
+    expect(types(parse(body))).toEqual(["htmlInline", "htmlInline"]);
+    same(body);
+  });
+
+  test("a block wrapper around Markdown", () => {
+    const body = '<div style="text-align: center">\n\nHello **there**\n\n* a list\n\n</div>\n';
+    const tree = parse(body);
+    expect(types(tree)).toEqual(["htmlContainer"]);
+    expect((tree.children[0] as unknown as { children: unknown[] }).children).toHaveLength(2);
+    same(body);
+  });
+
+  test("columns: containers inside a container", () => {
+    const body = '<div style="display: grid">\n<div>\n\nOne\n\n</div>\n<div>\n\nTwo\n\n</div>\n</div>\n';
+    expect(types(parse(body))).toEqual(["htmlContainer", "htmlContainer", "htmlContainer"]);
+    same(body);
+  });
+
+  test("details with a summary", () => {
+    const body = "<details>\n<summary>More</summary>\n\nHidden *text*\n\n</details>\n";
+    const tree = parse(body);
+    expect(types(tree)).toEqual(["htmlContainer"]);
+    expect((tree.children[0] as unknown as { summary: string }).summary).toBe("<summary>More</summary>");
+    same(body);
+  });
+
+  test("inside components", () => {
+    const body = '{% <border> %}\n<div style="text-align: right">\n\nRight\n\n</div>\n{% </border> %}\n';
+    expect(types(parse(body))).toEqual(["htmlContainer"]);
+    same(body);
+  });
+
+  test("unpaired tags and raw HTML stay as they are", () => {
+    const body = "<div>\n\nNever closed\n\n<p>Some <b>raw</b> html</p>\n\nA lone </span> here.\n";
+    expect(types(parse(body))).toEqual(["html", "html", "html"]);
+    same(body);
   });
 });
