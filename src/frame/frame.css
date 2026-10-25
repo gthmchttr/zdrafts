@@ -1,0 +1,47 @@
+/* Editor styles inside the site's page: as little as possible, so the theme's own look shows */
+.zd-root { display: contents; }
+/* The wrapper adds no box; the editable element itself needs one to take focus */
+.zd-root > .milkdown { display: contents; }
+.zd-root .ProseMirror { display: block; }
+.zd-root .ProseMirror { outline: none; white-space: pre-wrap; word-wrap: break-word; min-height: 4em; }
+.zd-root .ProseMirror:focus { outline: none; }
+.zd-root .ProseMirror > :first-child { margin-top: 0; }
+
+/* Components: a faint outline on hover shows what's a component */
+.zd-component { outline: 1px dashed transparent; outline-offset: 3px; transition: outline-color .15s; }
+.zd-component:hover { outline-color: rgba(96, 165, 250, .55); }
+.zd-component.ProseMirror-selectednode, .zd-component.zd-selected { outline: 2px solid #3b82f6; }
+/* ProseMirror's pre-wrap would show the whitespace between the theme's tags as blank lines */
+.zd-component { white-space: normal; }
+.zd-slot, .zd-text { outline: none; white-space: pre-wrap; }
+.zd-text:empty::before { content: "\200b"; }
+.zd-atom { cursor: pointer; }
+.zd-atom img { pointer-events: none; }
+
+/* Components that can't be edited in place */
+.zd-fallback {
+  border: 1px dashed rgba(127, 127, 127, .5);
+  border-radius: 6px;
+  padding: .5em .75em;
+  margin: 1em 0;
+}
+.zd-fallback-head, .zd-close { opacity: .6; }
+.zd-tag { font: .8em ui-monospace, SFMono-Regular, Menlo, monospace; }
+.zd-preview { margin: .5em 0; }
+.zd-fallback-body { border-left: 2px solid rgba(127, 127, 127, .35); padding-left: .75em; margin: .5em 0; }
+.zd-pending { opacity: .5; font-style: italic; font-size: .9em; }
+.zd-error { color: #ef4444; font: .8em ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+.zd-tera {
+  font: .85em ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: rgba(127, 127, 127, .15);
+  border-radius: 4px;
+  padding: .1em .35em;
+}
+pre.zd-tera-block { padding: .5em .75em; white-space: pre-wrap; }
+.zd-inline-fallback { border-bottom: 1px dashed rgba(127, 127, 127, .6); }
+
+/* ProseMirror's own selections and drop cursor */
+.zd-root .ProseMirror-selectednode { outline: 2px solid #3b82f6; }
+.zd-root .ProseMirror li.ProseMirror-selectednode { outline: none; }
+.zd-root li[data-item-type="task"] { list-style: none; }
+.zd-root li[data-checked] { position: relative; }
