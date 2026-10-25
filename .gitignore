@@ -1,0 +1,6 @@
+node_modules/
+dist/
+# zola.wasm and zola-wasi.js from the zola-wasi release (npm run setup)
+public/zola/
+.DS_Store
+tests/fixtures/
