@@ -2,7 +2,7 @@
 import { DraftStore } from "../drafts.ts";
 import { joinFrontMatter, splitFrontMatter } from "../markdown/frontmatter.ts";
 import { commitFiles } from "../repo/commit.ts";
-import { loadRepo, type LoadedRepo, type Progress, type RepoRef } from "../repo/github.ts";
+import { GitHubError, loadRepo, rememberCommit, type LoadedRepo, type Progress, type RepoRef } from "../repo/github.ts";
 import { inspectSite, SiteError, type SiteInfo } from "../repo/site.ts";
 import { findTheme, type ThemeAdapter } from "../themes/index.ts";
 import { chromeOverrides, findPages } from "../zola/chrome.ts";
@@ -146,8 +146,17 @@ export class Session {
   /** Commit the drafts of `paths` to the branch; they become the files' new originals */
   async commit(paths: string[], message: string): Promise<string> {
     const files = new Map(paths.map((path) => [path, this.text(path)]));
-    const sha = await commitFiles({ fullName: this.repo.fullName, branch: this.repo.ref, base: this.repo.commit, files, message });
+    const { fullName, ref: branch } = this.repo;
+    let sha: string;
+    try {
+      sha = await commitFiles({ fullName, branch, base: this.repo.commit, files, message });
+    } catch (error) {
+      // The branch moved on: the next load must fetch its latest commit
+      if (error instanceof GitHubError && error.kind === "conflict") await rememberCommit(fullName, branch, null);
+      throw error;
+    }
     this.repo.commit = sha;
+    await rememberCommit(fullName, branch, sha);
     for (const [path, text] of files) {
       this.repo.files.set(path, encoder.encode(text));
       await this.drafts.discard(path);

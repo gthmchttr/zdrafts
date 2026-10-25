@@ -5,7 +5,7 @@
 // load) and downloads each from raw.githubusercontent.com (CORS-enabled, not rate-limited).
 // Files are cached in IndexedDB by git blob SHA and trees by commit, so a reload only asks GitHub
 // for the branch's latest commit and downloads what changed.
-import { createStore, get, getMany, set, setMany } from "idb-keyval";
+import { createStore, entries as storeEntries, get, getMany, set, setMany } from "idb-keyval";
 import { getToken } from "./token.ts";
 
 export interface RepoRef {
@@ -66,7 +66,19 @@ interface Head {
   private: boolean;
   branch: string;
   commit: string;
+  /** When GitHub last confirmed `commit` is the branch's latest (ms since epoch) */
+  checkedAt?: number;
+  /** GitHub's ETag for that answer, for a conditional request next time */
+  etag?: string;
 }
+
+/**
+ * Without a token every API request counts against 60 an hour, so a branch checked this recently
+ * isn't asked about again. Commits made here update the remembered commit (rememberCommit), and
+ * committing always checks the branch itself, so this never hides zdrafts' own work or overwrites
+ * anyone's.
+ */
+const RECHECK_AFTER = 10 * 60 * 1000;
 
 const API = "https://api.github.com";
 const RAW = "https://raw.githubusercontent.com";
@@ -94,7 +106,8 @@ export async function githubFetch(path: string, init: RequestInit = {}, accept =
   headers.set("X-GitHub-Api-Version", "2022-11-28");
   if (token) headers.set("Authorization", `Bearer ${token.token}`);
   const response = await fetch(`${API}${path}`, { ...init, headers });
-  if (response.ok) return response;
+  // 304: the conditional request's answer hasn't changed (free with a token)
+  if (response.ok || response.status === 304) return response;
 
   const detail = await response
     .json()
@@ -149,19 +162,48 @@ async function resolveHead(ref: RepoRef): Promise<Head & { stale?: string }> {
   const name = `${ref.owner}/${ref.repo}`;
   const key = `head:${name}@${ref.ref ?? ""}`;
   const last = treeStore && (await get<Head>(key, treeStore).catch(() => undefined));
+  const token = getToken();
+  if (last && !token && last.checkedAt && Date.now() - last.checkedAt < RECHECK_AFTER) return last;
   try {
     // The default branch hardly ever changes, so it's looked up once
     const info = last && !ref.ref
       ? { full_name: last.fullName, default_branch: last.branch, private: last.private }
       : await api<{ default_branch: string; full_name: string; private: boolean }>(`/repos/${name}`);
     const branch = ref.ref ?? info.default_branch;
-    const { sha } = await api<{ sha: string }>(`/repos/${info.full_name}/commits/${encodeURIComponent(branch)}`);
-    const head = { fullName: info.full_name, private: info.private, branch, commit: sha };
+    // Just the SHA, conditionally: with a token, an unchanged branch costs no rate limit
+    const same = last && last.fullName === info.full_name && last.branch === branch;
+    const response = await githubFetch(
+      `/repos/${info.full_name}/commits/${encodeURIComponent(branch)}`,
+      { headers: same && last.etag ? { "If-None-Match": last.etag } : {} },
+      "application/vnd.github.sha",
+    );
+    const commit = response.status === 304 && same ? last.commit : (await response.text()).trim();
+    const head: Head = {
+      fullName: info.full_name,
+      private: info.private,
+      branch,
+      commit,
+      checkedAt: Date.now(),
+      etag: response.headers.get("etag") ?? (response.status === 304 ? last?.etag : undefined),
+    };
     if (treeStore) await set(key, head, treeStore).catch(() => {});
     return head;
   } catch (error) {
     if (!(error instanceof GitHubError && error.kind === "rate-limit") || !last) throw error;
     return { ...last, stale: `${error.message} Showing ${last.branch} as last loaded (${last.commit.slice(0, 7)}).` };
+  }
+}
+
+/**
+ * Update what's remembered about a branch after committing to it (`commit`), or forget when it was
+ * last checked (null), so the next load asks GitHub for its latest commit.
+ */
+export async function rememberCommit(fullName: string, branch: string, commit: string | null): Promise<void> {
+  if (!treeStore) return;
+  for (const [key, head] of await storeEntries<string, Head>(treeStore).catch(() => [] as [string, Head][])) {
+    if (!key.startsWith("head:") || head.fullName.toLowerCase() !== fullName.toLowerCase() || head.branch !== branch) continue;
+    const next = commit ? { ...head, commit, checkedAt: Date.now(), etag: undefined } : { ...head, checkedAt: undefined, etag: undefined };
+    await set(key, next, treeStore).catch(() => {});
   }
 }
 

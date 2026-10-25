@@ -23,7 +23,9 @@ rendered by the theme and edited inline.
 
 Public repositories open without one. A token is asked for when it's needed: to commit, to open a
 private repository, or when GitHub's limit of 60 requests an hour without a token is used up.
-Opening a site costs one request when it was opened before, four the first time.
+Opening a site costs four requests the first time. After that, only the branch's latest commit is
+asked for: free with a token when nothing changed (a conditional request), and without a token at
+most once every 10 minutes. Trees are cached by commit and files by content hash.
 
 Use a [fine-grained token](https://github.com/settings/personal-access-tokens/new?name=zdrafts&contents=write)
 with access to only the site's repository and *Contents: Read and write*. zdrafts commits with
