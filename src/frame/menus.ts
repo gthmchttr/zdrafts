@@ -20,7 +20,7 @@ import type { EditorView } from "@milkdown/kit/prose/view";
 import { $prose, callCommand } from "@milkdown/kit/utils";
 import { setStringAttr } from "../markdown/tera.ts";
 import { defaultArgs, type ComponentInfo } from "../zola/components.ts";
-import type { ContextSection, Overlay, ToolbarButton } from "./overlay.ts";
+import type { ContextItem, ContextSection, Overlay, ToolbarButton } from "./overlay.ts";
 import type { ThemeInfo } from "./protocol.ts";
 
 export interface MenuEnv {
@@ -79,11 +79,11 @@ export function menus(env: MenuEnv) {
   const formatItems = (view: EditorView) => {
     const { schema } = view.state;
     return [
-      { key: "bold", label: "Bold", glyph: "B", keys: `${mod}B`, mark: schema.marks.strong, run: () => run(view, toggleStrongCommand.key) },
-      { key: "italic", label: "Italic", glyph: "I", keys: `${mod}I`, mark: schema.marks.emphasis, run: () => run(view, toggleEmphasisCommand.key) },
-      { key: "strike", label: "Strikethrough", glyph: "S", keys: `${mod}${mac ? "⌥" : "Alt+"}X`, mark: schema.marks.strike_through, run: () => run(view, toggleStrikethroughCommand.key) },
-      { key: "code", label: "Inline code", glyph: "<>", keys: `${mod}E`, mark: schema.marks.inlineCode, run: () => run(view, toggleInlineCodeCommand.key) },
-      { key: "link", label: "Link…", glyph: "🔗", keys: "", mark: schema.marks.link, run: () => env.openLink(view) },
+      { label: "Bold", icon: "bold" as const, keys: `${mod}B`, mark: schema.marks.strong, run: () => run(view, toggleStrongCommand.key) },
+      { label: "Italic", icon: "italic" as const, keys: `${mod}I`, mark: schema.marks.emphasis, run: () => run(view, toggleEmphasisCommand.key) },
+      { label: "Strikethrough", icon: "strikethrough" as const, keys: `${mod}${mac ? "⌥" : "Alt+"}X`, mark: schema.marks.strike_through, run: () => run(view, toggleStrikethroughCommand.key) },
+      { label: "Inline code", icon: "code" as const, keys: `${mod}E`, mark: schema.marks.inlineCode, run: () => run(view, toggleInlineCodeCommand.key) },
+      { label: "Link…", icon: "link" as const, keys: "", mark: schema.marks.link, run: () => env.openLink(view) },
     ];
   };
 
@@ -95,7 +95,7 @@ export function menus(env: MenuEnv) {
   };
 
   /** Theme components that take text (e.g. mark, color): wrap the selected words in one */
-  const wrapItems = (view: EditorView) => {
+  const wrapItems = (view: EditorView): ContextItem[] => {
     const { from, to, $from, $to } = view.state.selection;
     if (from === to || $from.parent !== $to.parent || !$from.parent.isTextblock) return [];
     const hidden = new Set(env.theme.hiddenComponents);
@@ -103,7 +103,7 @@ export function menus(env: MenuEnv) {
       .filter((component) => component.textParam && !component.block && !hidden.has(component.name))
       .map((component) => ({
         label: component.name,
-        glyph: "{}",
+        icon: "component",
         run: () => {
           const { schema } = view.state;
           const words = view.state.doc.textBetween(from, to);
@@ -116,20 +116,20 @@ export function menus(env: MenuEnv) {
       }));
   };
 
-  const turnIntoItems = (view: EditorView) => {
+  const turnIntoItems = (view: EditorView): ContextItem[] => {
     const { $from } = view.state.selection;
     if (!$from.parent.isTextblock || $from.parent.type.name === "code_block" || isInTable(view.state)) return [];
     return [
-      { label: "Text", glyph: "¶", run: () => run(view, turnIntoTextCommand.key) },
-      ...[1, 2, 3, 4].map((level) => ({ label: `Heading ${level}`, glyph: `H${level}`, run: () => run(view, wrapInHeadingCommand.key, level) })),
-      { label: "Quote", glyph: "❝", run: () => run(view, wrapInBlockquoteCommand.key) },
-      { label: "Bulleted list", glyph: "•", run: () => run(view, wrapInBulletListCommand.key) },
-      { label: "Numbered list", glyph: "1.", run: () => run(view, wrapInOrderedListCommand.key) },
-      { label: "Code block", glyph: "{ }", run: () => run(view, createCodeBlockCommand.key) },
+      { label: "Text", icon: "text", run: () => run(view, turnIntoTextCommand.key) },
+      ...([1, 2, 3, 4] as const).map((level): ContextItem => ({ label: `Heading ${level}`, icon: `h${level}`, run: () => run(view, wrapInHeadingCommand.key, level) })),
+      { label: "Quote", icon: "quote", run: () => run(view, wrapInBlockquoteCommand.key) },
+      { label: "Bulleted list", icon: "list-unordered", run: () => run(view, wrapInBulletListCommand.key) },
+      { label: "Numbered list", icon: "list-ordered", run: () => run(view, wrapInOrderedListCommand.key) },
+      { label: "Code block", icon: "code-block", run: () => run(view, createCodeBlockCommand.key) },
     ];
   };
 
-  const codeItems = (view: EditorView) => {
+  const codeItems = (view: EditorView): ContextItem[] => {
     const { $from } = view.state.selection;
     if ($from.parent.type.name !== "code_block") return [];
     const pos = $from.before($from.depth);
@@ -137,7 +137,7 @@ export function menus(env: MenuEnv) {
     return [
       {
         label: `Language: ${node.attrs.language || "none"}…`,
-        glyph: "</>",
+        icon: "tag",
         run: () => {
           const coords = view.coordsAtPos(pos + 1);
           overlay.openForm({
@@ -158,11 +158,11 @@ export function menus(env: MenuEnv) {
           });
         },
       },
-      { label: "Turn into text", glyph: "¶", run: () => run(view, turnIntoTextCommand.key) },
+      { label: "Turn into text", icon: "text", run: () => run(view, turnIntoTextCommand.key) },
     ];
   };
 
-  const tableItems = (view: EditorView) => {
+  const tableSections = (view: EditorView): ContextSection[] => {
     if (!isInTable(view.state)) return [];
     const rect = selectedRect(view.state);
     // GFM tables always have exactly one header row, the first; it can't move or go away
@@ -173,28 +173,48 @@ export function menus(env: MenuEnv) {
       fn(view.state, view.dispatch);
       view.focus();
     };
+    const align = (alignment: "left" | "center" | "right") => () => {
+      env.markDirty();
+      alignColumn(view, alignment);
+      view.focus();
+    };
     return [
-      { label: "Insert row above", glyph: "↥", disabled: inHeader, run: () => run(view, addRowBeforeCommand.key) },
-      { label: "Insert row below", glyph: "↧", run: () => run(view, addRowAfterCommand.key) },
-      { label: "Insert column left", glyph: "↤", run: () => run(view, addColBeforeCommand.key) },
-      { label: "Insert column right", glyph: "↦", run: () => run(view, addColAfterCommand.key) },
-      { label: inHeader ? "Delete row (the header row stays)" : "Delete row", glyph: "✕", disabled: inHeader, run: command(deleteRow) },
-      { label: "Delete column", glyph: "✕", run: command(onlyColumn ? deleteTable : deleteColumn) },
-      { label: "Align column left", glyph: "⇤", run: () => (env.markDirty(), alignColumn(view, "left"), view.focus()) },
-      { label: "Align column center", glyph: "↔", run: () => (env.markDirty(), alignColumn(view, "center"), view.focus()) },
-      { label: "Align column right", glyph: "⇥", run: () => (env.markDirty(), alignColumn(view, "right"), view.focus()) },
-      { label: "Delete table", glyph: "🗑", run: command(deleteTable) },
+      {
+        title: inHeader ? "Row (the header row stays first)" : "Row",
+        items: [
+          { label: "Insert row above", icon: "arrow-up", disabled: inHeader, run: () => run(view, addRowBeforeCommand.key) },
+          { label: "Insert row below", icon: "arrow-down", run: () => run(view, addRowAfterCommand.key) },
+          { label: "Delete row", icon: "trash", disabled: inHeader, run: command(deleteRow) },
+        ],
+      },
+      {
+        title: "Column",
+        items: [
+          { label: "Insert column left", icon: "arrow-left", run: () => run(view, addColBeforeCommand.key) },
+          { label: "Insert column right", icon: "arrow-right", run: () => run(view, addColAfterCommand.key) },
+          { label: "Delete column", icon: "trash", run: command(onlyColumn ? deleteTable : deleteColumn) },
+        ],
+      },
+      {
+        title: "Align column",
+        items: [
+          { label: "Left", icon: "align-left", run: align("left") },
+          { label: "Center", icon: "align-center", run: align("center") },
+          { label: "Right", icon: "align-right", run: align("right") },
+        ],
+      },
+      { title: "Table", items: [{ label: "Delete table", icon: "trash", run: command(deleteTable) }] },
     ];
   };
 
-  const blockItems = (view: EditorView) => {
+  const blockItems = (view: EditorView): ContextItem[] => {
     const block = currentBlock(view.state);
     if (!block) return [];
     const name = block.node.type.name === "zola_block" ? `{% ${block.node.attrs.name} %}` : block.node.type.name.replace(/_/g, " ");
     return [
       {
         label: `Select block (${name})`,
-        glyph: "⠿",
+        icon: "gripper",
         run: () => {
           view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, block.pos)));
           view.focus();
@@ -202,7 +222,7 @@ export function menus(env: MenuEnv) {
       },
       {
         label: "Delete block",
-        glyph: "🗑",
+        icon: "trash",
         run: () => {
           env.markDirty();
           view.dispatch(view.state.tr.delete(block.pos, block.pos + block.node.nodeSize).scrollIntoView());
@@ -215,36 +235,36 @@ export function menus(env: MenuEnv) {
   const showContext = (view: EditorView, x: number, y: number) => {
     const { selection } = view.state;
     const sections: ContextSection[] = [];
-    const textSelected = !selection.empty && selection instanceof TextSelection;
-    if (textSelected) {
-      sections.push({ title: "Format", items: [...formatItems(view), { label: "Clear formatting", glyph: "⌫", run: () => clearFormatting(view) }] });
+    if (!selection.empty && selection instanceof TextSelection) {
+      sections.push({ title: "Format", items: [...formatItems(view), { label: "Clear formatting", icon: "eraser", run: () => clearFormatting(view) }] });
       const wrap = wrapItems(view);
       if (wrap.length) sections.push({ title: "Wrap in component", items: wrap });
     }
     const code = codeItems(view);
     if (code.length) sections.push({ title: "Code block", items: code });
-    const table = tableItems(view);
-    if (table.length) sections.push({ title: "Table", items: table });
+    const table = tableSections(view);
+    sections.push(...table);
     const turn = turnIntoItems(view);
     if (turn.length) sections.push({ title: "Turn into", items: turn });
-    const block = blockItems(view);
+    // In a table, "Delete table" is the block action
+    const block = table.length ? [] : blockItems(view);
     if (block.length) sections.push({ title: "Block", items: block });
     if (sections.length) overlay.showContext(sections, x, y);
   };
 
   const updateToolbar = (view: EditorView) => {
     const { selection } = view.state;
-    const show = view.hasFocus() && !selection.empty && selection instanceof TextSelection && selection.$from.parent.type.name !== "code_block";
+    const show = !overlay.contextOpen && view.hasFocus() && !selection.empty && selection instanceof TextSelection && selection.$from.parent.type.name !== "code_block";
     if (!show) return overlay.hideToolbar();
     const buttons: ToolbarButton[] = formatItems(view).map((item) => ({
-      label: item.key === "bold" ? "<b>B</b>" : item.key === "italic" ? "<i>I</i>" : item.key === "strike" ? "<s>S</s>" : item.key === "code" ? "&lt;/&gt;" : "🔗",
+      icon: item.icon,
       title: `${item.label.replace("…", "")}${item.keys ? ` (${item.keys})` : ""}`,
       on: hasMark(view.state, item.mark),
       run: item.run,
     }));
-    buttons.push({ label: "⌫", title: "Clear formatting", separate: true, run: () => clearFormatting(view) });
+    buttons.push({ icon: "eraser", title: "Clear formatting", separate: true, run: () => clearFormatting(view) });
     buttons.push({
-      label: "⋯",
+      icon: "ellipsis",
       title: "More (also on right click)",
       run: () => {
         const end = view.coordsAtPos(view.state.selection.to);
@@ -287,7 +307,8 @@ export function menus(env: MenuEnv) {
               return true;
             },
             // The toolbar waits until the mouse selection is done
-            mousedown(view) {
+            mousedown(view, event) {
+              if (event.button !== 0) return false;
               selecting = true;
               const done = () => {
                 selecting = false;

@@ -105,3 +105,9 @@ Shell (React)                                    Site frame (iframe, same origin
 - `src/frame/`: the Milkdown editor mounted at the marker, with node views that use the theme's
   rendered component markup, the `/` menu and popovers (in a shadow root).
 - `src/themes/`: per-theme adapters (edit-mode CSS, hidden components, menu hints).
+
+## Credits
+
+Icons are [Codicons](https://github.com/microsoft/vscode-codicons) by Microsoft, under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the three text alignment icons are drawn
+in their style.

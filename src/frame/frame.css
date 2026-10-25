@@ -44,4 +44,7 @@ pre.zd-tera-block { padding: .5em .75em; white-space: pre-wrap; }
 .zd-root .ProseMirror-selectednode { outline: 2px solid #3b82f6; }
 .zd-root .ProseMirror li.ProseMirror-selectednode { outline: none; }
 .zd-root li[data-item-type="task"] { list-style: none; }
+/* prosemirror-tables gives cells this minimum width; without it, a blank column (e.g. in a new
+   table) shrinks to the cell's padding, leaving no room for the cursor */
+.zd-root .ProseMirror { --default-cell-min-width: 6em; }
 .zd-root li[data-checked] { position: relative; }

@@ -1,5 +1,6 @@
 // zdrafts' UI inside the site's page (slash menu, component handle, settings popovers), in a
 // shadow root so the site's CSS and ours can't affect each other.
+import { icon, type IconName } from "./icons.ts";
 
 const STYLE = `
 :host { all: initial; }
@@ -32,20 +33,25 @@ button.btn.danger { background: #5a1d1d; color: #f2b8b5; }
 .note { color: #8b8b8b; font-size: 12px; margin: -2px 0 10px; }
 .error { color: #f2b8b5; font: 12px ui-monospace, Menlo, monospace; white-space: pre-wrap; margin-bottom: 8px; }
 .context, .toolbar, .grip { pointer-events: auto; position: fixed; }
-.context { background: #252526; border: 1px solid #454545; border-radius: 6px; box-shadow: 0 8px 24px #0009; min-width: 220px; max-height: calc(100vh - 16px); overflow: auto; padding: 4px; }
+.context { background: #252526; border: 1px solid #454545; border-radius: 6px; box-shadow: 0 8px 24px #0009; min-width: 220px; max-height: calc(100vh - 16px); overflow: auto; overscroll-behavior: contain; padding: 4px; }
 .context .section { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #8b8b8b; padding: 6px 10px 2px; }
 .context .sep { height: 1px; background: #454545; margin: 4px 0; }
-.context button { display: flex; width: 100%; gap: 10px; align-items: center; background: none; border: 0; color: #e7e7e7; font: inherit; text-align: left; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+.context button { display: flex; width: 100%; gap: 10px; align-items: center; background: none; border: 0; color: #e7e7e7; font: inherit; text-align: left; padding: 4px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
 .context button:hover:not(:disabled), .context button:focus-visible { background: #04395e; outline: none; }
 .context button:disabled { color: #6e6e6e; cursor: default; }
-.context .glyph { width: 18px; text-align: center; color: #b0b0b0; flex-shrink: 0; font-family: ui-monospace, Menlo, monospace; }
+.glyph { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: #c5c5c5; }
+.glyph svg { width: 16px; height: 16px; display: block; }
+.heading-icon { font: 600 10.5px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; letter-spacing: -.02em; }
+button:disabled .glyph { color: #5a5a5a; }
 .context .keys { margin-left: auto; padding-left: 16px; color: #8b8b8b; font-size: 12px; }
 .toolbar { display: flex; gap: 2px; background: #252526; border: 1px solid #454545; border-radius: 6px; box-shadow: 0 6px 18px #0009; padding: 3px; }
-.toolbar button { min-width: 28px; height: 28px; background: none; border: 0; border-radius: 4px; color: #e7e7e7; font: 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; cursor: pointer; padding: 0 6px; }
+.toolbar button { width: 28px; height: 28px; display: grid; place-items: center; background: none; border: 0; border-radius: 4px; color: #e7e7e7; cursor: pointer; padding: 0; }
+.toolbar button .glyph { color: inherit; }
 .toolbar button:hover { background: #3a3d41; }
 .toolbar button.on { background: #04395e; color: #fff; }
 .toolbar .sep { width: 1px; background: #454545; margin: 4px 3px; }
-.grip { width: 18px; height: 24px; display: grid; place-items: center; color: #8b8b8b; border-radius: 4px; cursor: grab; font: 14px/1 ui-monospace, Menlo, monospace; user-select: none; background: rgba(37, 37, 38, .6); }
+.grip { width: 18px; height: 24px; display: grid; place-items: center; color: #8b8b8b; border-radius: 4px; cursor: grab; user-select: none; background: rgba(37, 37, 38, .6); }
+.grip svg { width: 16px; height: 16px; }
 .grip:hover { background: #3a3d41; color: #e7e7e7; }
 .grip:active { cursor: grabbing; }
 .grip[hidden] { display: none; }
@@ -53,8 +59,7 @@ button.btn.danger { background: #5a1d1d; color: #f2b8b5; }
 
 export interface ContextItem {
   label: string;
-  /** A short symbol shown before the label */
-  glyph?: string;
+  icon?: IconName;
   /** Keyboard shortcut shown after the label */
   keys?: string;
   disabled?: boolean;
@@ -67,7 +72,7 @@ export interface ContextSection {
 }
 
 export interface ToolbarButton {
-  label: string;
+  icon: IconName;
   title: string;
   on?: boolean;
   /** A separator goes before this button */
@@ -99,6 +104,8 @@ export class Overlay {
   private context: HTMLElement | null = null;
   private toolbar: HTMLElement | null = null;
   readonly grip: HTMLElement;
+  /** Floating UI that moves with the page when it scrolls, by its position in the document */
+  private pinned = new Map<HTMLElement, { left: number; top: number }>();
 
   constructor(private doc: Document) {
     const host = doc.createElement("zdrafts-ui");
@@ -111,7 +118,7 @@ export class Overlay {
     root.append(style, this.layer);
     this.grip = doc.createElement("div");
     this.grip.className = "grip";
-    this.grip.textContent = "⠿";
+    this.grip.innerHTML = icon("gripper");
     this.grip.draggable = true;
     this.grip.title = "Click to select this block (then Delete removes it); drag to move it";
     this.grip.hidden = true;
@@ -132,19 +139,36 @@ export class Overlay {
         this.hideContext();
       }
     });
-    doc.addEventListener("scroll", () => this.hideContext(), true);
+    // Menus stay beside the content they're for while the page scrolls
+    doc.defaultView!.addEventListener("scroll", () => {
+      const view = doc.defaultView!;
+      for (const [element, at] of this.pinned) {
+        if (!element.isConnected) this.pinned.delete(element);
+        else {
+          element.style.left = `${at.left - view.scrollX}px`;
+          element.style.top = `${at.top - view.scrollY}px`;
+        }
+      }
+    });
+  }
+
+  /** Put `element` at viewport position (left, top) and keep it there relative to the page */
+  private pin(element: HTMLElement, left: number, top: number) {
+    const view = this.doc.defaultView!;
+    element.style.left = `${left}px`;
+    element.style.top = `${top}px`;
+    this.pinned.set(element, { left: left + view.scrollX, top: top + view.scrollY });
   }
 
   private place(element: HTMLElement, anchor: { left: number; top: number; bottom: number }, width: number) {
     const view = this.doc.defaultView!;
     const left = Math.max(8, Math.min(anchor.left, view.innerWidth - width - 8));
-    element.style.left = `${left}px`;
     // Below the anchor, or above it when there isn't room
-    element.style.top = `${anchor.bottom + 6}px`;
+    this.pin(element, left, anchor.bottom + 6);
     requestAnimationFrame(() => {
       const height = element.getBoundingClientRect().height;
       if (anchor.bottom + 6 + height > view.innerHeight - 8 && anchor.top - 6 - height > 8) {
-        element.style.top = `${anchor.top - 6 - height}px`;
+        this.pin(element, left, anchor.top - 6 - height);
       }
     });
   }
@@ -196,6 +220,7 @@ export class Overlay {
 
   showContext(sections: ContextSection[], x: number, y: number) {
     this.hideContext();
+    this.hideToolbar();
     const menu = this.doc.createElement("div");
     menu.className = "context";
     menu.setAttribute("role", "menu");
@@ -206,10 +231,9 @@ export class Overlay {
         const button = this.doc.createElement("button");
         button.setAttribute("role", "menuitem");
         button.disabled = !!item.disabled;
-        button.append(
-          Object.assign(this.doc.createElement("span"), { className: "glyph", textContent: item.glyph ?? "" }),
-          Object.assign(this.doc.createElement("span"), { textContent: item.label }),
-        );
+        const glyph = Object.assign(this.doc.createElement("span"), { className: "glyph" });
+        if (item.icon) glyph.innerHTML = icon(item.icon);
+        button.append(glyph, Object.assign(this.doc.createElement("span"), { textContent: item.label }));
         if (item.keys) button.append(Object.assign(this.doc.createElement("span"), { className: "keys", textContent: item.keys }));
         // mousedown, so the editor keeps its selection
         button.addEventListener("mousedown", (event) => {
@@ -225,13 +249,16 @@ export class Overlay {
     this.context = menu;
     const view = this.doc.defaultView!;
     const rect = menu.getBoundingClientRect();
-    menu.style.left = `${Math.max(8, Math.min(x, view.innerWidth - rect.width - 8))}px`;
-    menu.style.top = `${Math.max(8, Math.min(y, view.innerHeight - rect.height - 8))}px`;
+    this.pin(menu, Math.max(8, Math.min(x, view.innerWidth - rect.width - 8)), Math.max(8, Math.min(y, view.innerHeight - rect.height - 8)));
   }
 
   hideContext() {
     this.context?.remove();
     this.context = null;
+  }
+
+  get contextOpen(): boolean {
+    return !!this.context;
   }
 
   // --- formatting toolbar (on a text selection) ---
@@ -249,7 +276,7 @@ export class Overlay {
     for (const button of buttons) {
       if (button.separate) bar.append(Object.assign(this.doc.createElement("span"), { className: "sep" }));
       const element = this.doc.createElement("button");
-      element.innerHTML = button.label;
+      element.innerHTML = `<span class="glyph">${icon(button.icon)}</span>`;
       element.title = button.title;
       element.setAttribute("aria-label", button.title);
       element.setAttribute("aria-pressed", String(!!button.on));
@@ -265,8 +292,7 @@ export class Overlay {
     const height = bar.getBoundingClientRect().height;
     const left = Math.max(8, Math.min((anchor.left + anchor.right) / 2 - width / 2, view.innerWidth - width - 8));
     const top = anchor.top - height - 8 > 8 ? anchor.top - height - 8 : anchor.bottom + 8;
-    bar.style.left = `${left}px`;
-    bar.style.top = `${top}px`;
+    this.pin(bar, left, top);
   }
 
   hideToolbar() {
