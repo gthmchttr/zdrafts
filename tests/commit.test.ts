@@ -23,6 +23,7 @@ function fakeGitHub(options: { head: string; changedSinceBase?: string[]; status
     if (method === "GET" && p.includes("/compare/"))
       return json({ status: options.status ?? "ahead", files: (options.changedSinceBase ?? []).map((filename) => ({ filename })) });
     if (method === "GET" && p.includes("/git/commits/")) return json({ tree: { sha: "tree-of-head" } });
+    if (method === "POST" && p.endsWith("/git/blobs")) return json({ sha: "new-blob" }, 201);
     if (method === "POST" && p.endsWith("/git/trees")) return json({ sha: "new-tree" }, 201);
     if (method === "POST" && p.endsWith("/git/commits")) return json({ sha: "new-commit" }, 201);
     if (method === "PATCH" && p.endsWith("/git/refs/heads/main")) return json({ object: { sha: "new-commit" } });
@@ -77,6 +78,21 @@ describe("commitFiles", () => {
     expect(error.kind).toBe("conflict");
     expect(error.message).toContain("content/a.md");
     expect(calls.some((c) => c.method !== "GET")).toBe(false);
+  });
+
+  test("uploads binary files as blobs", async () => {
+    const calls = fakeGitHub({ head: "base" });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 255]);
+    await commitFiles({ ...request, files: new Map<string, string | Uint8Array>([["static/images/a.png", png], ["content/a.md", "![a](/images/a.png)\n"]]) });
+    const blob = calls.find((c) => c.path.endsWith("/git/blobs"))!;
+    expect(blob.body).toEqual({ content: Buffer.from(png).toString("base64"), encoding: "base64" });
+    expect(calls.find((c) => c.path.endsWith("/git/trees"))!.body).toEqual({
+      base_tree: "tree-of-head",
+      tree: [
+        { path: "static/images/a.png", mode: "100644", type: "blob", sha: "new-blob" },
+        { path: "content/a.md", mode: "100644", type: "blob", content: "![a](/images/a.png)\n" },
+      ],
+    });
   });
 
   test("refuses when the branch was rewritten", async () => {

@@ -45,8 +45,12 @@ export class SiteCache {
   private written = new Map<string, string>();
 
   /** Make the cache hold exactly `files` (paths relative to the site root) */
-  async write(files: Map<string, Uint8Array>): Promise<void> {
-    if (this.written.size === 0) await caches.delete(CACHE);
+  /**
+   * Publish a build's output. With `complete` false, `files` are added to what's published (a new
+   * image, before the next build) instead of replacing it.
+   */
+  async write(files: Map<string, Uint8Array>, complete = true): Promise<void> {
+    if (this.written.size === 0 && complete) await caches.delete(CACHE);
     const cache = await caches.open(CACHE);
     const writes: Promise<void>[] = [];
     for (const [path, data] of files) {
@@ -56,7 +60,7 @@ export class SiteCache {
       const body = new Blob([data as BlobPart], { type: contentType(path) });
       writes.push(cache.put(`${SITE_PREFIX}/${path}`, new Response(body, { headers: { "content-type": contentType(path) } })));
     }
-    for (const path of [...this.written.keys()]) {
+    for (const path of complete ? [...this.written.keys()] : []) {
       if (!files.has(path)) {
         this.written.delete(path);
         writes.push(cache.delete(`${SITE_PREFIX}/${path}`).then(() => {}));

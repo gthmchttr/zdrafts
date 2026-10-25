@@ -22,6 +22,11 @@ export class Probes {
     return result;
   }
 
+  /** A result if there is one, without asking for it */
+  peek(call: ProbeCall): ProbeResult | undefined {
+    return this.results.get(probeKey(call));
+  }
+
   request(call: ProbeCall) {
     const key = probeKey(call);
     if (this.requested.has(key)) return;

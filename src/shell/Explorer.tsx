@@ -31,6 +31,10 @@ function buildTree(paths: string[]): TreeNode[] {
   return root.children;
 }
 
+/** The drag data type for a file dragged from the explorer (its path), read by the frame editor */
+export const ASSET_DRAG_TYPE = "application/x-zdrafts-path";
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
+
 export function fileIcon(name: string): { icon: string; className: string } {
   const ext = name.split(".").pop()!.toLowerCase();
   if (ext === "md" || ext === "markdown") return { icon: "markdown", className: "icon-md" };
@@ -49,11 +53,14 @@ export function Explorer({
   paths,
   selected,
   modified,
+  added,
   onOpen,
 }: {
   paths: string[];
   selected: string | null;
   modified: Set<string>;
+  /** Files that are new (not in the repository yet) */
+  added: Set<string>;
   onOpen: (path: string) => void;
 }) {
   const tree = useMemo(() => buildTree(paths), [paths]);
@@ -165,6 +172,13 @@ export function Explorer({
             className={`tree-row${node.path === focused ? " selected" : ""}${isModified ? " modified" : ""}`}
             title={node.path}
             onClick={() => activate(node)}
+            // Images can be dragged into the page being edited
+            draggable={!node.folder && IMAGE_FILE.test(node.name)}
+            onDragStart={(event) => {
+              event.dataTransfer.setData(ASSET_DRAG_TYPE, node.path);
+              event.dataTransfer.setData("text/plain", node.path);
+              event.dataTransfer.effectAllowed = "copy";
+            }}
           >
             <span className="indent" aria-hidden="true">
               {Array.from({ length: depth }, (_, i) => (
@@ -176,7 +190,7 @@ export function Explorer({
             </span>
             <span className={`file-icon codicon codicon-${icon.icon} ${icon.className}`} aria-hidden="true" />
             <span className="name">{node.name}</span>
-            {isModified && !node.folder && <span className="status">M</span>}
+            {isModified && !node.folder && <span className="status">{added.has(node.path) ? "A" : "M"}</span>}
             {isModified && node.folder && <span className="status">●</span>}
           </div>
         );

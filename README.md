@@ -11,6 +11,16 @@ rendered by the theme and edited inline.
 - Markdown shortcuts (`# `, `> `, `- `, `1. `, ` ``` `, `**bold**`…) and a `/` menu for blocks,
   headings (`/head`, `/h2`), tables, images, links and the theme's components (`/border`).
 - A settings popover per component (the handle on hover) for its arguments.
+- A grip beside each block: click it to select the block (Delete removes it), drag it to move it.
+- A formatting toolbar over selected text, and a context menu on right click (Shift + right click
+  for the browser's own): bold, italic, strikethrough, code, links, wrapping text in the theme's
+  inline components, turning blocks into headings, lists, quotes or code, code block language,
+  and table rows, columns, column alignment and deletion. GFM tables always have one header row,
+  the first, so it can't be removed or moved.
+- Code blocks are highlighted by Zola itself (the site's highlighting theme), live as you type.
+- Drop or paste images into the page: they're added under `static/images/` and committed with the
+  page. Images can also be dragged in from the explorer.
+- The site's `zola.toml` can be edited too; the site rebuilds with it.
 - Page settings (front matter) and a Source view per file.
 - Edits are kept as drafts in the browser (IndexedDB) per repository, marked in the explorer and
   listed in the Changes view, where they can be committed to the branch, downloaded as a zip,
@@ -56,7 +66,7 @@ Known limitations:
   next to a preview.
 - File contents come from `raw.githubusercontent.com` (public) or the API's blob endpoint
   (private repositories) and are cached in IndexedDB by blob SHA.
-- Only edits to existing pages can be committed; creating, deleting and renaming files isn't supported yet.
+- Pages can be edited and images added; creating pages, and deleting or renaming files, isn't supported yet.
 
 ## Development
 

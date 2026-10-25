@@ -6,10 +6,11 @@
 //   text   {{ <color text="zdrafts-slot-3" color="blue" /> }}
 //          → the HTML with that text where the editable text goes
 //   atom   {{ <img src="…" /> }}   → just the HTML
+//   code   a fenced code block (name: its language, args: its code) → Zola's highlighted <pre>
 import { inlineTag, openTag } from "../markdown/remark-zola.ts";
 import { setStringAttr } from "../markdown/tera.ts";
 
-export type ProbeKind = "block" | "text" | "atom";
+export type ProbeKind = "block" | "text" | "atom" | "code";
 
 export interface ProbeCall {
   kind: ProbeKind;
@@ -35,6 +36,12 @@ export const probeKey = (call: ProbeCall) => `${call.kind}\u0000${call.name}\u00
 
 export function probePage(calls: ProbeCall[]): string {
   const parts = calls.map((call, n) => {
+    if (call.kind === "code") {
+      // A fence longer than any run of backticks in the code
+      const longest = Math.max(2, ...[...call.args.matchAll(/`+/g)].map((m) => m[0].length));
+      const fence = "`".repeat(longest + 1);
+      return `<div data-zdrafts-probe="${n}">\n\n${fence}${call.name}\n${call.args}\n${fence}\n\n</div>`;
+    }
     if (call.kind === "block") {
       return `<div data-zdrafts-probe="${n}">\n\n${openTag(call.name, call.args)}<!--${SLOT_COMMENT}-->{% </${call.name}> %}\n\n</div>`;
     }

@@ -42,7 +42,8 @@ function download(name: string, data: Uint8Array, type: string) {
 
 export function Workbench({ session, onClose }: { session: Session; onClose: () => void }) {
   useSession(session);
-  const explorerPaths = useMemo(() => session.explorerPaths(), [session]);
+  const draftKey = session.drafts.paths().join("\n");
+  const explorerPaths = useMemo(() => session.explorerPaths(), [session, draftKey]);
   const [tabs, setTabs] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [modes, setModes] = useState<Record<string, Mode>>({});
@@ -58,6 +59,7 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
   const [logOpen, setLogOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const modified = new Set(session.drafts.paths());
+  const added = new Set([...modified].filter((path) => session.isAdded(path)));
 
   const open = useCallback((path: string) => {
     setTabs((current) => (current.includes(path) ? current : [...current, path]));
@@ -191,7 +193,7 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
           <span className="codicon codicon-chevron-down" aria-hidden="true" />
           {session.repo.repo}
         </div>
-        <Explorer paths={explorerPaths} selected={active} modified={modified} onOpen={open} />
+        <Explorer paths={explorerPaths} selected={active} modified={modified} added={added} onOpen={open} />
       </aside>
       {view === "changes" && (
         <aside className="sidebar">
@@ -257,7 +259,7 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
                         <span className="codicon codicon-discard" aria-hidden="true" />
                       </button>
                     </span>
-                    <span className="status">M</span>
+                    <span className="status">{added.has(path) ? "A" : "M"}</span>
                   </div>
                 );
               })}
@@ -375,6 +377,8 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
 
 function EditorBody({ session, path, mode, onNavigate }: { session: Session; path: string | null; mode: Mode; onNavigate: (href: string) => void }) {
   const saveText = useMemo(() => debounce((p: string, text: string) => void session.saveText(p, text), 400), [session]);
+  // A config edit rebuilds the whole site: wait for a pause in typing
+  const saveConfig = useMemo(() => debounce((p: string, text: string) => void session.saveText(p, text), 1200), [session]);
   if (!path) {
     return (
       <div className="empty">
@@ -391,6 +395,16 @@ function EditorBody({ session, path, mode, onNavigate }: { session: Session; pat
     return <PreviewPane key={`${path}:${session.layoutVersion}`} url={url.pathname + url.search + url.hash} onNavigate={onNavigate} />;
   }
   if (IMAGE.test(path)) return <ImageView session={session} path={path} />;
+  if (path === session.site.configPath) {
+    return (
+      <>
+        <div className="panel-note" style={{ borderTop: 0, borderBottom: "1px solid var(--border)" }}>
+          The site's configuration. The site rebuilds when you stop typing; build errors show in the status bar.
+        </div>
+        <CodeEditor key={path} value={session.text(path)} language="toml" label={path} onChange={(text) => saveConfig(path, text)} />
+      </>
+    );
+  }
   if (!path.endsWith(".md")) {
     return (
       <div className="empty">

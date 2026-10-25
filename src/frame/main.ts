@@ -2,6 +2,7 @@
 // the editor, so everything around it is the theme's real markup and CSS.
 import proseMirrorCss from "@milkdown/kit/prose/view/style/prosemirror.css?inline";
 import tablesCss from "@milkdown/kit/prose/tables/style/tables.css?inline";
+import { Assets } from "./assets.ts";
 import { createEditor } from "./editor.ts";
 import { Probes } from "./probes.ts";
 import type { FrameToShell, ShellToFrame } from "./protocol.ts";
@@ -54,15 +55,17 @@ async function main() {
   );
 
   const probes = new Probes(post);
+  const assets = new Assets(post);
   let started = false;
   window.addEventListener("message", (event: MessageEvent<ShellToFrame>) => {
     if (event.origin !== location.origin || event.source !== window.parent) return;
     const message = event.data;
     if (message.type === "probe-result") probes.receive(message);
+    else if (message.type === "asset-added") assets.receive(message);
     else if (message.type === "doc" && message.path === path && !started) {
       started = true;
       addStyle(message.theme.editCss);
-      createEditor(root, message, post, probes).catch((error) => {
+      createEditor(root, message, post, probes, assets).catch((error) => {
         console.error(error);
         root.textContent = `zdrafts couldn't open this page: ${error}`;
       });

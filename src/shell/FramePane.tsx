@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FrameToShell, ShellToFrame } from "../frame/protocol.ts";
 import { splitFrontMatter } from "../markdown/frontmatter.ts";
-import type { Session } from "./session.ts";
+import { Session } from "./session.ts";
 
 export function FramePane({
   session,
@@ -52,6 +52,14 @@ export function FramePane({
         }
         case "navigate":
           onNavigate(message.href);
+          break;
+        case "add-asset":
+          try {
+            const added = await session.addAsset(message.name, new Uint8Array(message.data));
+            send({ type: "asset-added", id: message.id, src: Session.siteUrlOf(added) });
+          } catch (error) {
+            send({ type: "asset-added", id: message.id, error: String(error) });
+          }
           break;
       }
     };

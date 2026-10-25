@@ -1,15 +1,20 @@
 // The Milkdown editor that replaces a page's content inside the site's own markup.
 import { defaultValueCtx, Editor, editorViewCtx, parserCtx, remarkStringifyOptionsCtx, rootCtx, serializerCtx } from "@milkdown/kit/core";
+import { block, blockConfig, blockServiceInstance, defaultNodeFilter } from "@milkdown/kit/plugin/block";
 import { clipboard } from "@milkdown/kit/plugin/clipboard";
 import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
 import { commonmark, imageSchema } from "@milkdown/kit/preset/commonmark";
 import { gfm, insertTableCommand, remarkGFMPlugin } from "@milkdown/kit/preset/gfm";
-import { callCommand } from "@milkdown/kit/utils";
+import { dropCursor } from "@milkdown/kit/prose/dropcursor";
+import { $prose, callCommand } from "@milkdown/kit/utils";
 import { preserveSource, splitBlocks } from "../markdown/preserve.ts";
 import { zolaHandlers } from "../markdown/remark-zola.ts";
 import { encodeTera } from "../markdown/tera.ts";
 import type { ComponentInfo } from "../zola/components.ts";
+import { assetPlugin, type Assets } from "./assets.ts";
+import { codeBlocks } from "./codeblock.ts";
+import { menus } from "./menus.ts";
 import { COMPONENT_ATTR, inlineTextKeys, probeRefresh, probeRefreshKey, remarkZolaPlugin, zolaNodes, zolaViews, type EditorEnv } from "./nodes.ts";
 import { Overlay } from "./overlay.ts";
 import { Probes } from "./probes.ts";
@@ -34,7 +39,7 @@ const image = imageSchema.extendSchema((schema) => (ctx) => {
   };
 });
 
-export async function createEditor(root: HTMLElement, message: DocMessage, post: (message: FrameToShell) => void, probes: Probes) {
+export async function createEditor(root: HTMLElement, message: DocMessage, post: (message: FrameToShell) => void, probes: Probes, assets: Assets) {
   const doc = root.ownerDocument;
   const components = new Map<string, ComponentInfo>(message.components.map((c) => [c.name, c]));
   const overlay = new Overlay(doc);
@@ -104,7 +109,24 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
     .use(zolaViews(env, nodes))
     .use(probeRefresh(nodes))
     .use(inlineTextKeys)
-    .use(slashPlugin(() => items, overlay, markDirty));
+    .use(slashPlugin(() => items, overlay, markDirty))
+    .use(codeBlocks(env))
+    .use(assetPlugin(assets, markDirty))
+    .use(
+      menus({
+        overlay,
+        components,
+        theme: message.theme,
+        editor: () => editor,
+        openLink: (view) => openLinkForm(settingsEnv, view),
+        markDirty,
+      }),
+    )
+    // The grip beside each block: click selects it (Delete removes it), drag moves it
+    .config((ctx) => ctx.set(blockConfig.key, { filterNodes: (pos, node) => node.isBlock && defaultNodeFilter(pos, node) }))
+    .use(block)
+    // Where a dragged block or image will land
+    .use($prose(() => dropCursor({ color: "#3b82f6", width: 2 })));
 
   await editor.create();
 
@@ -124,6 +146,9 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
       root.before(note);
     }
     probes.onChange(() => view.dispatch(view.state.tr.setMeta(probeRefreshKey, probes.version)));
+    const service = ctx.get(blockServiceInstance.key);
+    service.bind(ctx, (event) => (event.type === "show" ? overlay.showGrip(event.active.el) : overlay.hideGrip()));
+    service.addEvent(overlay.grip);
   });
 
   // A small handle on the component under the pointer opens its settings
@@ -138,7 +163,14 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
       overlay.showHandle(element, element.getAttribute(COMPONENT_ATTR)!, () => env.openSettings(element));
     } else if (!element) overlay.hideHandle();
   });
-  doc.addEventListener("scroll", () => overlay.hideHandle(), true);
+  doc.addEventListener(
+    "scroll",
+    () => {
+      overlay.hideHandle();
+      overlay.hideGrip();
+    },
+    true,
+  );
 
   return editor;
 }

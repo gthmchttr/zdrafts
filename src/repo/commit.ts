@@ -8,8 +8,8 @@ export interface CommitRequest {
   branch: string;
   /** The commit the edits were made on */
   base: string;
-  /** Path → new text */
-  files: Map<string, string>;
+  /** Path → new contents: text, or bytes for binary files (images) */
+  files: Map<string, string | Uint8Array>;
   message: string;
 }
 
@@ -40,12 +40,21 @@ export async function commitFiles(request: CommitRequest): Promise<string> {
   }
 
   const parent = await api<{ tree: { sha: string } }>(`/repos/${fullName}/git/commits/${head}`);
+  // Text goes into the tree directly; binary files are uploaded as blobs first
+  const entries = [];
+  for (const [path, content] of files) {
+    if (typeof content === "string") entries.push({ path, mode: "100644", type: "blob", content });
+    else {
+      const blob = await api<{ sha: string }>(`/repos/${fullName}/git/blobs`, {
+        method: "POST",
+        body: JSON.stringify({ content: base64(content), encoding: "base64" }),
+      });
+      entries.push({ path, mode: "100644", type: "blob", sha: blob.sha });
+    }
+  }
   const tree = await api<{ sha: string }>(`/repos/${fullName}/git/trees`, {
     method: "POST",
-    body: JSON.stringify({
-      base_tree: parent.tree.sha,
-      tree: [...files].map(([path, content]) => ({ path, mode: "100644", type: "blob", content })),
-    }),
+    body: JSON.stringify({ base_tree: parent.tree.sha, tree: entries }),
   });
   const commit = await api<{ sha: string }>(`/repos/${fullName}/git/commits`, {
     method: "POST",
@@ -53,4 +62,10 @@ export async function commitFiles(request: CommitRequest): Promise<string> {
   });
   await api(ref, { method: "PATCH", body: JSON.stringify({ sha: commit.sha, force: false }) });
   return commit.sha;
+}
+
+function base64(data: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < data.length; i += 0x8000) binary += String.fromCharCode(...data.subarray(i, i + 0x8000));
+  return btoa(binary);
 }

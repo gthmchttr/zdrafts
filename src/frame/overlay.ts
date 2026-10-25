@@ -31,7 +31,49 @@ button.btn.secondary:hover { background: #454545; }
 button.btn.danger { background: #5a1d1d; color: #f2b8b5; }
 .note { color: #8b8b8b; font-size: 12px; margin: -2px 0 10px; }
 .error { color: #f2b8b5; font: 12px ui-monospace, Menlo, monospace; white-space: pre-wrap; margin-bottom: 8px; }
+.context, .toolbar, .grip { pointer-events: auto; position: fixed; }
+.context { background: #252526; border: 1px solid #454545; border-radius: 6px; box-shadow: 0 8px 24px #0009; min-width: 220px; max-height: calc(100vh - 16px); overflow: auto; padding: 4px; }
+.context .section { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #8b8b8b; padding: 6px 10px 2px; }
+.context .sep { height: 1px; background: #454545; margin: 4px 0; }
+.context button { display: flex; width: 100%; gap: 10px; align-items: center; background: none; border: 0; color: #e7e7e7; font: inherit; text-align: left; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+.context button:hover:not(:disabled), .context button:focus-visible { background: #04395e; outline: none; }
+.context button:disabled { color: #6e6e6e; cursor: default; }
+.context .glyph { width: 18px; text-align: center; color: #b0b0b0; flex-shrink: 0; font-family: ui-monospace, Menlo, monospace; }
+.context .keys { margin-left: auto; padding-left: 16px; color: #8b8b8b; font-size: 12px; }
+.toolbar { display: flex; gap: 2px; background: #252526; border: 1px solid #454545; border-radius: 6px; box-shadow: 0 6px 18px #0009; padding: 3px; }
+.toolbar button { min-width: 28px; height: 28px; background: none; border: 0; border-radius: 4px; color: #e7e7e7; font: 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; cursor: pointer; padding: 0 6px; }
+.toolbar button:hover { background: #3a3d41; }
+.toolbar button.on { background: #04395e; color: #fff; }
+.toolbar .sep { width: 1px; background: #454545; margin: 4px 3px; }
+.grip { width: 18px; height: 24px; display: grid; place-items: center; color: #8b8b8b; border-radius: 4px; cursor: grab; font: 14px/1 ui-monospace, Menlo, monospace; user-select: none; background: rgba(37, 37, 38, .6); }
+.grip:hover { background: #3a3d41; color: #e7e7e7; }
+.grip:active { cursor: grabbing; }
+.grip[hidden] { display: none; }
 `;
+
+export interface ContextItem {
+  label: string;
+  /** A short symbol shown before the label */
+  glyph?: string;
+  /** Keyboard shortcut shown after the label */
+  keys?: string;
+  disabled?: boolean;
+  run: () => void;
+}
+
+export interface ContextSection {
+  title?: string;
+  items: ContextItem[];
+}
+
+export interface ToolbarButton {
+  label: string;
+  title: string;
+  on?: boolean;
+  /** A separator goes before this button */
+  separate?: boolean;
+  run: () => void;
+}
 
 export interface MenuEntry {
   group: string;
@@ -54,6 +96,9 @@ export class Overlay {
   private handle: HTMLElement | null = null;
   private popover: HTMLElement | null = null;
   private popoverClose: (() => void) | null = null;
+  private context: HTMLElement | null = null;
+  private toolbar: HTMLElement | null = null;
+  readonly grip: HTMLElement;
 
   constructor(private doc: Document) {
     const host = doc.createElement("zdrafts-ui");
@@ -64,19 +109,30 @@ export class Overlay {
     this.layer = doc.createElement("div");
     this.layer.className = "layer";
     root.append(style, this.layer);
+    this.grip = doc.createElement("div");
+    this.grip.className = "grip";
+    this.grip.textContent = "⠿";
+    this.grip.draggable = true;
+    this.grip.title = "Click to select this block (then Delete removes it); drag to move it";
+    this.grip.hidden = true;
+    this.layer.append(this.grip);
     doc.addEventListener(
       "mousedown",
       (event) => {
-        if (this.popover && !event.composedPath().includes(this.popover)) this.closePopover();
+        const path = event.composedPath();
+        if (this.popover && !path.includes(this.popover)) this.closePopover();
+        if (this.context && !path.includes(this.context)) this.hideContext();
       },
       true,
     );
     doc.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && this.popover) {
+      if (event.key === "Escape" && (this.popover || this.context)) {
         event.preventDefault();
         this.closePopover();
+        this.hideContext();
       }
     });
+    doc.addEventListener("scroll", () => this.hideContext(), true);
   }
 
   private place(element: HTMLElement, anchor: { left: number; top: number; bottom: number }, width: number) {
@@ -134,6 +190,103 @@ export class Overlay {
   hideMenu() {
     this.menu?.remove();
     this.menu = null;
+  }
+
+  // --- context menu (right click) ---
+
+  showContext(sections: ContextSection[], x: number, y: number) {
+    this.hideContext();
+    const menu = this.doc.createElement("div");
+    menu.className = "context";
+    menu.setAttribute("role", "menu");
+    sections.forEach((section, i) => {
+      if (i > 0) menu.append(Object.assign(this.doc.createElement("div"), { className: "sep" }));
+      if (section.title) menu.append(Object.assign(this.doc.createElement("div"), { className: "section", textContent: section.title }));
+      for (const item of section.items) {
+        const button = this.doc.createElement("button");
+        button.setAttribute("role", "menuitem");
+        button.disabled = !!item.disabled;
+        button.append(
+          Object.assign(this.doc.createElement("span"), { className: "glyph", textContent: item.glyph ?? "" }),
+          Object.assign(this.doc.createElement("span"), { textContent: item.label }),
+        );
+        if (item.keys) button.append(Object.assign(this.doc.createElement("span"), { className: "keys", textContent: item.keys }));
+        // mousedown, so the editor keeps its selection
+        button.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          if (item.disabled) return;
+          this.hideContext();
+          item.run();
+        });
+        menu.append(button);
+      }
+    });
+    this.layer.append(menu);
+    this.context = menu;
+    const view = this.doc.defaultView!;
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(x, view.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, view.innerHeight - rect.height - 8))}px`;
+  }
+
+  hideContext() {
+    this.context?.remove();
+    this.context = null;
+  }
+
+  // --- formatting toolbar (on a text selection) ---
+
+  showToolbar(buttons: ToolbarButton[], anchor: { left: number; right: number; top: number; bottom: number }) {
+    if (!this.toolbar) {
+      this.toolbar = this.doc.createElement("div");
+      this.toolbar.className = "toolbar";
+      this.toolbar.setAttribute("role", "toolbar");
+      this.toolbar.setAttribute("aria-label", "Formatting");
+      this.layer.append(this.toolbar);
+    }
+    const bar = this.toolbar;
+    bar.replaceChildren();
+    for (const button of buttons) {
+      if (button.separate) bar.append(Object.assign(this.doc.createElement("span"), { className: "sep" }));
+      const element = this.doc.createElement("button");
+      element.innerHTML = button.label;
+      element.title = button.title;
+      element.setAttribute("aria-label", button.title);
+      element.setAttribute("aria-pressed", String(!!button.on));
+      if (button.on) element.className = "on";
+      element.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        button.run();
+      });
+      bar.append(element);
+    }
+    const view = this.doc.defaultView!;
+    const width = bar.getBoundingClientRect().width;
+    const height = bar.getBoundingClientRect().height;
+    const left = Math.max(8, Math.min((anchor.left + anchor.right) / 2 - width / 2, view.innerWidth - width - 8));
+    const top = anchor.top - height - 8 > 8 ? anchor.top - height - 8 : anchor.bottom + 8;
+    bar.style.left = `${left}px`;
+    bar.style.top = `${top}px`;
+  }
+
+  hideToolbar() {
+    this.toolbar?.remove();
+    this.toolbar = null;
+  }
+
+  // --- block grip ---
+
+  showGrip(block: Element) {
+    const rect = block.getBoundingClientRect();
+    // Beside the block's first line
+    const line = Math.min(rect.height, 24);
+    this.grip.style.left = `${Math.max(2, rect.left - 24)}px`;
+    this.grip.style.top = `${rect.top + Math.max(0, (line - 24) / 2)}px`;
+    this.grip.hidden = false;
+  }
+
+  hideGrip() {
+    this.grip.hidden = true;
   }
 
   // --- component handle ---

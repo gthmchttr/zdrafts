@@ -89,13 +89,18 @@ export class Session {
     for (const listener of this.listeners) listener();
   }
 
-  /** Files shown in the explorer: the site's own content/ and static/ (not the theme's) */
+  /** Files shown in the explorer: the site's config and its own content/ and static/ (not the theme's), added files included */
   explorerPaths(): string[] {
-    return this.repo.entries
-      .filter((entry) => entry.source === `${this.repo.owner}/${this.repo.repo}` || entry.source.toLowerCase() === `${this.repo.owner}/${this.repo.repo}`.toLowerCase())
+    const own = this.repo.entries
+      .filter((entry) => entry.source.toLowerCase() === this.repo.fullName.toLowerCase())
       .map((entry) => entry.path)
-      .filter((path) => path.startsWith("content/") || path.startsWith("static/"))
-      .sort();
+      .filter((path) => path.startsWith("content/") || path.startsWith("static/") || path === this.site.configPath);
+    return [...new Set([...own, ...this.drafts.paths()])].sort();
+  }
+
+  /** Files that don't exist in the repository yet (added here) */
+  isAdded(path: string): boolean {
+    return this.drafts.get(path) !== undefined && !this.repo.files.has(path);
   }
 
   staticImages(): string[] {
@@ -109,7 +114,9 @@ export class Session {
 
   /** The file as edited (draft) or as in the repository */
   text(path: string): string {
-    return this.drafts.get(path) ?? this.original(path);
+    const draft = this.drafts.get(path);
+    if (draft === undefined) return this.original(path);
+    return typeof draft === "string" ? draft : decoder.decode(draft);
   }
 
   isModified(path: string): boolean {
@@ -118,7 +125,30 @@ export class Session {
 
   bytes(path: string): Uint8Array | undefined {
     const draft = this.drafts.get(path);
-    return draft !== undefined ? encoder.encode(draft) : this.repo.files.get(path);
+    if (draft === undefined) return this.repo.files.get(path);
+    return typeof draft === "string" ? encoder.encode(draft) : draft;
+  }
+
+  /**
+   * Add a file (a dropped or pasted image) under static/, next to a free name, and serve it right
+   * away so the editor can show it before the next build. Returns its path in the repository.
+   */
+  async addAsset(name: string, data: Uint8Array): Promise<string> {
+    const clean = name.normalize("NFKD").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "image";
+    const dot = clean.lastIndexOf(".");
+    const [stem, ext] = dot > 0 ? [clean.slice(0, dot), clean.slice(dot)] : [clean, ""];
+    let path = `static/images/${clean}`;
+    for (let n = 2; this.repo.files.has(path) || this.drafts.get(path) !== undefined; n++) path = `static/images/${stem}-${n}${ext}`;
+    await this.drafts.put(path, data);
+    await this.cache.write(new Map([[path.slice("static/".length), data]]), false);
+    this.emit();
+    this.scheduleRebuild(false);
+    return path;
+  }
+
+  /** A static/ file's URL on the site ("/images/a.png") */
+  static siteUrlOf(path: string): string {
+    return `/${path.replace(/^static\//, "")}`;
   }
 
   /** Save the body of a page from the editor, keeping its (possibly edited) front matter */
@@ -128,24 +158,31 @@ export class Session {
     this.emit();
   }
 
-  /** Save a whole file (front matter or source edits); front matter changes need a rebuild */
+  /** Save a whole file (front matter, source or config edits); some changes need a rebuild */
   async saveText(path: string, text: string): Promise<void> {
-    const before = splitFrontMatter(this.text(path)).frontMatter;
+    const before = this.layoutOf(path);
     await this.drafts.save(path, text, this.original(path));
     this.emit();
-    if (splitFrontMatter(text).frontMatter !== before) this.scheduleRebuild();
+    if (this.layoutOf(path) !== before) this.scheduleRebuild();
   }
 
   async discard(path: string): Promise<void> {
-    const before = splitFrontMatter(this.text(path)).frontMatter;
+    const before = this.layoutOf(path);
     await this.drafts.discard(path);
     this.emit();
-    if (splitFrontMatter(this.text(path)).frontMatter !== before) this.scheduleRebuild();
+    if (this.layoutOf(path) !== before) this.scheduleRebuild();
+  }
+
+  /** What of a file the chrome build uses: a page's front matter, or all of any other file */
+  private layoutOf(path: string): string {
+    if (this.contentPages.includes(path)) return splitFrontMatter(this.text(path)).frontMatter;
+    const data = this.bytes(path);
+    return data ? `${data.length}:${decoder.decode(data.slice(0, 4096))}:${this.drafts.get(path) === undefined}` : "";
   }
 
   /** Commit the drafts of `paths` to the branch; they become the files' new originals */
   async commit(paths: string[], message: string): Promise<string> {
-    const files = new Map(paths.map((path) => [path, this.text(path)]));
+    const files = new Map(paths.map((path) => [path, this.drafts.get(path) ?? this.text(path)]));
     const { fullName, ref: branch } = this.repo;
     let sha: string;
     try {
@@ -157,17 +194,17 @@ export class Session {
     }
     this.repo.commit = sha;
     await rememberCommit(fullName, branch, sha);
-    for (const [path, text] of files) {
-      this.repo.files.set(path, encoder.encode(text));
+    for (const [path, data] of files) {
+      this.repo.files.set(path, typeof data === "string" ? encoder.encode(data) : data);
       await this.drafts.discard(path);
     }
     this.emit();
     return sha;
   }
 
-  /** Rebuild because pages' front matter changed: open pages reload once it's done */
-  scheduleRebuild() {
-    this.layoutDirty = true;
+  /** Rebuild because pages' front matter or the site's files changed; open pages reload once it's done unless `reload` is false */
+  scheduleRebuild(reload = true) {
+    if (reload) this.layoutDirty = true;
     if (this.building) {
       this.rebuildQueued = true;
       return;
@@ -195,6 +232,8 @@ export class Session {
     this.status = { state: "building" };
     this.emit();
     const overrides: Map<string, Uint8Array | null> = chromeOverrides(this.contentPages, (path) => this.text(path));
+    // Edited config, added images…: everything else that has a draft
+    for (const path of this.drafts.paths()) if (!overrides.has(path)) overrides.set(path, this.bytes(path)!);
     const calls = [...this.probeCalls.values()];
     if (calls.length) overrides.set(PROBE_CONTENT, encoder.encode(probePage(calls)));
 
@@ -211,7 +250,12 @@ export class Session {
     } else if (result.ok && calls.length) {
       const html = result.files.get("__zdrafts__/probe/index.html");
       const results = html ? parseProbe(decoder.decode(html), calls) : calls.map(() => ({ html: "", slot: false, error: "No probe output" }));
-      calls.forEach((call, i) => this.probes.set(probeKey(call), results[i]));
+      calls.forEach((call, i) => {
+        this.probes.set(probeKey(call), results[i]);
+        // Highlighted code needs no files, so later builds can leave it out. Components stay in:
+        // Zola prunes processed images (e.g. resized by img) that a build doesn't use.
+        if (call.kind === "code") this.probeCalls.delete(probeKey(call));
+      });
     }
 
     if (result.ok) {
@@ -236,8 +280,10 @@ export class Session {
       single.set(PROBE_CONTENT, encoder.encode(probePage([call])));
       const result = await this.zola.build(single, this.baseUrl);
       const html = result.files.get("__zdrafts__/probe/index.html");
-      if (result.ok && html) this.probes.set(key, parseProbe(decoder.decode(html), [call])[0]);
-      else {
+      if (result.ok && html) {
+        this.probes.set(key, parseProbe(decoder.decode(html), [call])[0]);
+        if (call.kind === "code") this.probeCalls.delete(key);
+      } else {
         const error = result.stderr.filter((line) => !/^(Building site|Done in)/.test(line)).slice(-6).join("\n");
         this.probes.set(key, { html: "", slot: false, error: error || "Zola couldn't render this component" });
         this.probeCalls.delete(key);

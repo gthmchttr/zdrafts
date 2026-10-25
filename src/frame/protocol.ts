@@ -12,7 +12,9 @@ export type FrameToShell =
   | { type: "frame-ready"; path: string }
   | { type: "doc-change"; path: string; body: string }
   | { type: "probe"; id: number; calls: ProbeCall[] }
-  | { type: "navigate"; href: string };
+  | { type: "navigate"; href: string }
+  /** A dropped or pasted file to add to the site */
+  | { type: "add-asset"; id: number; name: string; data: ArrayBuffer };
 
 export type ShellToFrame =
   | {
@@ -25,4 +27,6 @@ export type ShellToFrame =
       staticImages: string[];
       siteUrl: string;
     }
-  | { type: "probe-result"; id: number; results: [string, ProbeResult][] };
+  | { type: "probe-result"; id: number; results: [string, ProbeResult][] }
+  /** The added file's URL on the site ("/images/a.png") */
+  | { type: "asset-added"; id: number; src?: string; error?: string };
