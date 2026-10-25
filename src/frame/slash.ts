@@ -7,6 +7,7 @@ import type { EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
 import { defaultArgs, type ComponentInfo } from "../zola/components.ts";
 import type { ThemeInfo } from "./protocol.ts";
+import { currentBlock, makeCollapsible, makeColumns, setAlignment, setBox, type Block } from "./htmlcommands.ts";
 import type { Overlay } from "./overlay.ts";
 
 export interface SlashItem {
@@ -56,13 +57,13 @@ function insertBlock(view: EditorView, make: (state: EditorState) => ReturnType<
 
 export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeInfo, actions: SlashActions): SlashItem[] {
   const items: SlashItem[] = [
-    { id: "text", group: "Basic", label: "Text", description: "Plain paragraph", icon: "¶", keywords: ["paragraph", "p"], run: setBlock("paragraph") },
+    { id: "text", group: "Basic", label: "Text", description: "Plain paragraph", icon: "text", keywords: ["paragraph", "p"], run: setBlock("paragraph") },
     ...[1, 2, 3, 4, 5, 6].map((level) => ({
       id: `h${level}`,
       group: "Basic",
       label: `Heading ${level}`,
       description: `${"#".repeat(level)} Section heading`,
-      icon: `H${level}`,
+      icon: `h${level}`,
       keywords: ["heading", "head", "title", `h${level}`],
       run: setBlock("heading", { level }),
     })),
@@ -71,7 +72,7 @@ export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeI
       group: "Basic",
       label: "Bulleted list",
       description: "- item",
-      icon: "•",
+      icon: "list-unordered",
       keywords: ["list", "ul", "unordered", "bullet"],
       run: (view) => wrapInList(view.state.schema.nodes.bullet_list)(view.state, view.dispatch),
     },
@@ -80,7 +81,7 @@ export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeI
       group: "Basic",
       label: "Numbered list",
       description: "1. item",
-      icon: "1.",
+      icon: "list-ordered",
       keywords: ["list", "ol", "ordered", "number"],
       run: (view) => wrapInList(view.state.schema.nodes.ordered_list)(view.state, view.dispatch),
     },
@@ -89,7 +90,7 @@ export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeI
       group: "Basic",
       label: "Task list",
       description: "- [ ] to do",
-      icon: "☐",
+      icon: "task",
       keywords: ["todo", "check", "checkbox", "task", "list"],
       run: (view) => {
         if (!wrapInList(view.state.schema.nodes.bullet_list)(view.state, view.dispatch)) return;
@@ -107,18 +108,18 @@ export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeI
       group: "Basic",
       label: "Quote",
       description: "> quoted text",
-      icon: "❝",
+      icon: "quote",
       keywords: ["blockquote", "quote", "citation"],
       run: (view) => wrapIn(view.state.schema.nodes.blockquote)(view.state, view.dispatch),
     },
-    { id: "code", group: "Basic", label: "Code block", description: "``` fenced code", icon: "{ }", keywords: ["code", "pre", "fence", "snippet"], run: setBlock("code_block") },
-    { id: "table", group: "Basic", label: "Table", description: "3 × 3 table", icon: "▦", keywords: ["table", "grid"], run: () => actions.insertTable() },
+    { id: "code", group: "Basic", label: "Code block", description: "``` fenced code", icon: "code-block", keywords: ["code", "pre", "fence", "snippet"], run: setBlock("code_block") },
+    { id: "table", group: "Basic", label: "Table", description: "3 × 3 table", icon: "table", keywords: ["table", "grid"], run: () => actions.insertTable() },
     {
       id: "hr",
       group: "Basic",
       label: "Divider",
       description: "--- horizontal rule",
-      icon: "—",
+      icon: "divider",
       keywords: ["hr", "divider", "rule", "line", "separator"],
       run: (view) => {
         const { state } = view;
@@ -132,25 +133,45 @@ export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeI
         view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(start + rule.nodeSize + 1))).scrollIntoView());
       },
     },
-    { id: "image", group: "Basic", label: "Image", description: "![alt](path)", icon: "🖼", keywords: ["image", "picture", "img", "photo"], run: (view) => actions.insertImage(view) },
-    { id: "link", group: "Basic", label: "Link", description: "[text](url)", icon: "🔗", keywords: ["link", "url", "href", "a"], run: (view) => actions.insertLink(view) },
+    { id: "image", group: "Basic", label: "Image", description: "![alt](path)", icon: "image", keywords: ["image", "picture", "img", "photo"], run: (view) => actions.insertImage(view) },
+    { id: "link", group: "Basic", label: "Link", description: "[text](url)", icon: "link", keywords: ["link", "url", "href", "a"], run: (view) => actions.insertLink(view) },
   ];
 
+  // Layout in plain HTML, so it works in any theme (src/frame/htmlcommands.ts)
+  const onBlock = (change: (view: EditorView, block: Block) => void) => (view: EditorView) => {
+    const block = currentBlock(view.state);
+    if (!block) return;
+    change(view, block);
+    // The cursor goes back into the (now wrapped) line
+    view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(Math.min(block.pos + 2, view.state.doc.content.size)))));
+  };
+  items.push(
+    { id: "html:center", group: LAYOUT, label: "Centered", description: "Centre-aligned text", icon: "align-center", keywords: ["center", "centre", "align", "middle"], run: onBlock((view, block) => setAlignment(view, block, "center")) },
+    { id: "html:right", group: LAYOUT, label: "Right-aligned", description: "Right-aligned text", icon: "align-right", keywords: ["right", "align"], run: onBlock((view, block) => setAlignment(view, block, "right")) },
+    { id: "html:box", group: LAYOUT, label: "Box", description: "Bordered box", icon: "box-border", keywords: ["box", "border", "frame", "callout"], run: onBlock((view, block) => setBox(view, block, "border")) },
+    { id: "html:shaded", group: LAYOUT, label: "Shaded box", description: "Box with a tinted background", icon: "box-shaded", keywords: ["box", "shaded", "background", "callout", "panel"], run: onBlock((view, block) => setBox(view, block, "shaded")) },
+    { id: "html:columns2", group: LAYOUT, label: "2 columns", description: "Side by side; stacked on phones", icon: "columns-2", keywords: ["columns", "cols", "grid", "side"], run: (view) => { const block = currentBlock(view.state); if (block) makeColumns(view, block, 2); } },
+    { id: "html:columns3", group: LAYOUT, label: "3 columns", description: "Side by side; stacked on phones", icon: "columns-3", keywords: ["columns", "cols", "grid", "side"], run: (view) => { const block = currentBlock(view.state); if (block) makeColumns(view, block, 3); } },
+    { id: "html:details", group: LAYOUT, label: "Collapsible", description: "<details> with a title", icon: "collapsible", keywords: ["details", "collapse", "expand", "toggle", "accordion"], run: onBlock((view, block) => makeCollapsible(view, block)) },
+  );
+
   const hidden = new Set(theme.hiddenComponents);
-  for (const component of [...components.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+  // Theme components: blocks, then inline ones, each A to Z
+  const sorted = [...components.values()].sort((a, b) => Number(!a.block) - Number(!b.block) || a.name.localeCompare(b.name));
+  for (const component of sorted) {
     if (hidden.has(component.name) || component.params.some((p) => p.type === "map" && p.default === null)) continue;
     const hint = theme.componentHints[component.name] ?? {};
     const args = defaultArgs(component);
     const base = {
       id: `component:${component.name}`,
       label: hint.label ?? component.name,
-      icon: component.block ? "{%" : "{{",
+      icon: component.block ? "component" : "inline-component",
       keywords: [component.name, ...(hint.keywords ?? []), "component", "shortcode"],
     };
     if (component.block) {
       items.push({
         ...base,
-        group: "Blocks",
+        group: THEME_BLOCKS,
         description: hint.description ?? `{% <${component.name}> %}`,
         run: (view) => {
           const { schema } = view.state;
@@ -161,7 +182,7 @@ export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeI
     } else if (component.textParam) {
       items.push({
         ...base,
-        group: "Inline",
+        group: THEME_INLINE,
         description: hint.description ?? `{{ <${component.name} /> }}`,
         run: (view) => {
           const { schema } = view.state;
@@ -176,7 +197,7 @@ export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeI
     } else {
       items.push({
         ...base,
-        group: "Inline",
+        group: THEME_INLINE,
         description: hint.description ?? `{{ <${component.name} /> }}`,
         run: (view) => {
           const { schema } = view.state;
@@ -189,6 +210,12 @@ export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeI
   }
   return items;
 }
+
+const LAYOUT = "Layout (HTML, any theme)";
+const THEME_BLOCKS = "Theme blocks";
+const THEME_INLINE = "Theme inline";
+const GROUP_ORDER = ["Basic", LAYOUT, THEME_BLOCKS, THEME_INLINE];
+const groupRank = (item: SlashItem) => GROUP_ORDER.indexOf(item.group);
 
 /** Items matching what was typed after the slash, best matches first */
 export function filterItems(items: SlashItem[], query: string): SlashItem[] {
@@ -205,7 +232,8 @@ export function filterItems(items: SlashItem[], query: string): SlashItem[] {
   return items
     .map((item, index) => ({ item, index, score: score(item) }))
     .filter((entry) => entry.score >= 0)
-    .sort((a, b) => a.score - b.score || a.index - b.index)
+    // Groups stay together (in their usual order), best matches first within each
+    .sort((a, b) => groupRank(a.item) - groupRank(b.item) || a.score - b.score || a.index - b.index)
     .map((entry) => entry.item);
 }
 

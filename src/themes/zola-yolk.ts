@@ -11,7 +11,8 @@ export const zolaYolk: ThemeAdapter = {
     .tabs .tabs-panels > * { display: block !important; }
     details:not([open]) > :not(summary) { display: block !important; }
   `,
-  hiddenComponents: ["meta", "tags", "toc", "toc_items", "series.show", "section_paths", "recents", "related", "post_items", "by_year"],
+  // Template building blocks (page lists, metadata), not for writing in a page
+  hiddenComponents: ["meta", "tags", "toc", "toc_items", "series.show", "section_paths", "recents", "related", "post_items", "by_year", "list.by_year", "list.items", "list.recents", "sections.resolve"],
   componentHints: {
     border: { description: "Framed block", icon: "symbol-namespace", keywords: ["box", "frame"] },
     align: { description: "Align text", icon: "list-flat" },
