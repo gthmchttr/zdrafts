@@ -48,3 +48,10 @@ pre.zd-tera-block { padding: .5em .75em; white-space: pre-wrap; }
    table) shrinks to the cell's padding, leaving no room for the cursor */
 .zd-root .ProseMirror { --default-cell-min-width: 6em; }
 .zd-root li[data-checked] { position: relative; }
+
+/* HTML in the page (any theme): containers show their outline on hover, like components */
+.zd-root [data-zd-html] { outline: 1px dashed transparent; outline-offset: 3px; transition: outline-color .15s; }
+.zd-root [data-zd-html]:hover { outline-color: rgba(96, 165, 250, .35); }
+.zd-root [data-zd-html].ProseMirror-selectednode { outline: 2px solid #3b82f6; }
+.zd-root .zd-summary { cursor: default; user-select: none; }
+.zd-raw-html { display: inline-block; outline: 1px dashed rgba(127, 127, 127, .45); outline-offset: 2px; }

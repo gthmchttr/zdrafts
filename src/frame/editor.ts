@@ -9,11 +9,13 @@ import { gfm, insertTableCommand, remarkGFMPlugin } from "@milkdown/kit/preset/g
 import { dropCursor } from "@milkdown/kit/prose/dropcursor";
 import { $prose, callCommand } from "@milkdown/kit/utils";
 import { preserveSource, splitBlocks } from "../markdown/preserve.ts";
+import { htmlHandlers, htmlJoin } from "../markdown/remark-html.ts";
 import { zolaHandlers } from "../markdown/remark-zola.ts";
 import { encodeTera } from "../markdown/tera.ts";
 import type { ComponentInfo } from "../zola/components.ts";
 import { assetPlugin, type Assets } from "./assets.ts";
 import { codeBlocks } from "./codeblock.ts";
+import { htmlBlock, htmlInline, rawHtmlView, remarkHtmlPlugin } from "./htmlnodes.ts";
 import { menus } from "./menus.ts";
 import { COMPONENT_ATTR, inlineTextKeys, probeRefresh, probeRefreshKey, remarkZolaPlugin, zolaNodes, zolaViews, type EditorEnv } from "./nodes.ts";
 import { Overlay } from "./overlay.ts";
@@ -86,7 +88,8 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
       ctx.set(defaultValueCtx, encodeTera(message.body));
       ctx.update(remarkStringifyOptionsCtx, (options) => ({
         ...options,
-        handlers: { ...options.handlers, ...zolaHandlers },
+        handlers: { ...options.handlers, ...zolaHandlers, ...htmlHandlers },
+        join: [...(options.join ?? []), htmlJoin],
         // Closest to how Zola sites are usually written
         bullet: "-" as const,
         rule: "-" as const,
@@ -105,6 +108,9 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
     .use(listener)
     .use(clipboard)
     .use(remarkZolaPlugin)
+    // After remarkZola: HTML tags in component bodies are paired too
+    .use(remarkHtmlPlugin)
+    .use([htmlBlock, htmlInline, rawHtmlView])
     .use([nodes.block, nodes.text, nodes.atom, nodes.teraBlock])
     .use(zolaViews(env, nodes))
     .use(probeRefresh(nodes))

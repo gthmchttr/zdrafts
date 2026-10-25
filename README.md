@@ -8,8 +8,9 @@ in a worker) and shown with the site's real theme. Headings, paragraphs and list
 straight into the theme's markup, and theme components such as callouts or coloured text are
 rendered by the theme and edited inline.
 
-- Markdown shortcuts (`# `, `> `, `- `, `1. `, ` ``` `, `**bold**`…) and a `/` menu for blocks,
-  headings (`/head`, `/h2`), tables, images, links and the theme's components (`/border`).
+- Markdown shortcuts (`# `, `> `, `- `, `1. `, ` ``` `, `**bold**`…) and a `/` menu: Markdown
+  blocks (`/head`, `/h2`, tables, images, links), then layout in HTML, then the theme's components,
+  blocks before inline ones, each A to Z (`/border`).
 - A settings popover per component (the handle on hover) for its arguments.
 - A grip beside each block: click it to select the block (Delete removes it), drag it to move it.
 - A formatting toolbar over selected text, and a context menu on right click (Shift + right click
@@ -17,6 +18,15 @@ rendered by the theme and edited inline.
   inline components, turning blocks into headings, lists, quotes or code, code block language,
   and table rows, columns, column alignment and deletion. GFM tables always have one header row,
   the first, so it can't be removed or moved.
+- Formatting that works in any theme, because it's written as HTML with inline styles (Zola passes
+  HTML through, and Markdown between tags is still Markdown):
+  - on selected text: text colour, highlight, underline, superscript, subscript, keyboard keys
+    (`<span style="color: …">`, `<mark>`, `<u>`, `<sup>`, `<sub>`, `<kbd>`);
+  - on a block (right click, or select it with its grip for a toolbar): alignment, a border, dashed
+    border or shaded box, side-by-side columns that stack on narrow screens, and collapsible
+    sections (`<div style="…">`, `<details>`). Changes reuse the block's wrapper, so they don't nest.
+  - HTML already in a page shows as it renders: paired tags as editable elements, anything else
+    rendered in place (edit it in the Source view).
 - Code blocks are highlighted by Zola itself (the site's highlighting theme), live as you type.
 - Drop or paste images into the page: they're added under `static/images/` and committed with the
   page. Images can also be dragged in from the explorer.
@@ -61,7 +71,6 @@ Try it with [gthmchttr/gthmchttr.com](https://github.com/gthmchttr/gthmchttr.com
 
 Known limitations:
 
-- Inline HTML in Markdown (e.g. `<u>…</u>`) shows as literal text.
 - Components that transform their body (zola-yolk's `render`: Mermaid, math) are edited as source
   next to a preview.
 - File contents come from `raw.githubusercontent.com` (public) or the API's blob endpoint

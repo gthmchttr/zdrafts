@@ -1,6 +1,6 @@
 // zdrafts' UI inside the site's page (slash menu, component handle, settings popovers), in a
 // shadow root so the site's CSS and ours can't affect each other.
-import { icon, type IconName } from "./icons.ts";
+import { icon, isIconName, type IconName } from "./icons.ts";
 
 const STYLE = `
 :host { all: initial; }
@@ -11,6 +11,8 @@ const STYLE = `
 .item { display: flex; gap: 10px; align-items: center; padding: 5px 8px; border-radius: 4px; cursor: pointer; }
 .item.active { background: #04395e; }
 .item .icon { width: 28px; height: 28px; border-radius: 4px; display: grid; place-items: center; background: #333; color: #ddd; font: 600 12px ui-monospace, Menlo, monospace; flex-shrink: 0; }
+.item .icon svg { width: 16px; height: 16px; }
+.item .icon .heading-icon { font-size: 12px; }
 .item .label { color: #e7e7e7; }
 .item .desc { color: #9d9d9d; font-size: 12px; }
 .empty { padding: 8px; color: #8b8b8b; }
@@ -43,6 +45,12 @@ button.btn.danger { background: #5a1d1d; color: #f2b8b5; }
 .glyph svg { width: 16px; height: 16px; display: block; }
 .heading-icon { font: 600 10.5px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; letter-spacing: -.02em; }
 button:disabled .glyph { color: #5a5a5a; }
+.context .row { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px 6px 4px; }
+.context .row button { width: 28px; height: 28px; padding: 0; justify-content: center; gap: 0; }
+.context .row button.on { background: #04395e; }
+.swatch { width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .25); }
+.swatch.text { display: grid; place-items: center; box-shadow: none; font: 700 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.swatch.none { background: linear-gradient(135deg, transparent 45%, #e5484d 45%, #e5484d 55%, transparent 55%); }
 .context .keys { margin-left: auto; padding-left: 16px; color: #8b8b8b; font-size: 12px; }
 .toolbar { display: flex; gap: 2px; background: #252526; border: 1px solid #454545; border-radius: 6px; box-shadow: 0 6px 18px #0009; padding: 3px; }
 .toolbar button { width: 28px; height: 28px; display: grid; place-items: center; background: none; border: 0; border-radius: 4px; color: #e7e7e7; cursor: pointer; padding: 0; }
@@ -66,9 +74,20 @@ export interface ContextItem {
   run: () => void;
 }
 
+/** A compact button in a row: an icon, or a colour swatch */
+export interface RowButton {
+  title: string;
+  icon?: IconName;
+  /** A colour swatch: a background colour, a text colour ("text"), or "none" for "remove" */
+  swatch?: { color: string; kind: "fill" | "text" | "none" };
+  on?: boolean;
+  run: () => void;
+}
+
 export interface ContextSection {
   title?: string;
-  items: ContextItem[];
+  items?: ContextItem[];
+  row?: RowButton[];
 }
 
 export interface ToolbarButton {
@@ -198,7 +217,9 @@ export class Overlay {
       item.setAttribute("role", "option");
       item.setAttribute("aria-selected", String(index === active));
       item.innerHTML = `<span class="icon"></span><span><div class="label"></div><div class="desc"></div></span>`;
-      item.querySelector(".icon")!.textContent = entry.icon;
+      const box = item.querySelector(".icon")!;
+      if (isIconName(entry.icon)) box.innerHTML = icon(entry.icon);
+      else box.textContent = entry.icon;
       item.querySelector(".label")!.textContent = entry.label;
       item.querySelector(".desc")!.textContent = entry.description;
       item.addEventListener("mousedown", (event) => {
@@ -227,7 +248,36 @@ export class Overlay {
     sections.forEach((section, i) => {
       if (i > 0) menu.append(Object.assign(this.doc.createElement("div"), { className: "sep" }));
       if (section.title) menu.append(Object.assign(this.doc.createElement("div"), { className: "section", textContent: section.title }));
-      for (const item of section.items) {
+      if (section.row) {
+        const row = this.doc.createElement("div");
+        row.className = "row";
+        for (const entry of section.row) {
+          const button = this.doc.createElement("button");
+          button.title = entry.title;
+          button.setAttribute("aria-label", entry.title);
+          button.setAttribute("aria-pressed", String(!!entry.on));
+          if (entry.on) button.className = "on";
+          if (entry.icon) button.innerHTML = `<span class="glyph">${icon(entry.icon)}</span>`;
+          else if (entry.swatch) {
+            const swatch = this.doc.createElement("span");
+            swatch.className = `swatch${entry.swatch.kind === "fill" ? "" : ` ${entry.swatch.kind}`}`;
+            if (entry.swatch.kind === "fill") swatch.style.background = entry.swatch.color;
+            if (entry.swatch.kind === "text") {
+              swatch.textContent = "A";
+              swatch.style.color = entry.swatch.color;
+            }
+            button.append(swatch);
+          }
+          button.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+            this.hideContext();
+            entry.run();
+          });
+          row.append(button);
+        }
+        menu.append(row);
+      }
+      for (const item of section.items ?? []) {
         const button = this.doc.createElement("button");
         button.setAttribute("role", "menuitem");
         button.disabled = !!item.disabled;
