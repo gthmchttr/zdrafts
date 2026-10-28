@@ -1,6 +1,6 @@
 // Clone the sites the tests run against into tests/fixtures/ (gitignored), at pinned commits.
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,7 @@ const FIXTURES = [
 ];
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "tests", "fixtures");
+mkdirSync(root, { recursive: true });
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "inherit" });
 
 for (const { name, repo, commit } of FIXTURES) {
