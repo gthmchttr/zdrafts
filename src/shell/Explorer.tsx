@@ -1,5 +1,13 @@
 // The file tree, styled after VS Code's explorer: content/ and static/ of the site
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { canMoveInto } from "./files.ts";
+
+/** What the explorer asks the workbench to do */
+export type ExplorerAction =
+  | { type: "new"; folder: string; kind: "page" | "section" }
+  | { type: "rename"; path: string }
+  | { type: "delete"; path: string }
+  | { type: "move"; path: string; folder: string };
 
 interface TreeNode {
   name: string;
@@ -55,6 +63,7 @@ export function Explorer({
   modified,
   added,
   onOpen,
+  onAction,
 }: {
   paths: string[];
   selected: string | null;
@@ -62,7 +71,25 @@ export function Explorer({
   /** Files that are new (not in the repository yet) */
   added: Set<string>;
   onOpen: (path: string) => void;
+  onAction: (action: ExplorerAction) => void;
 }) {
+  const [menu, setMenu] = useState<{ x: number; y: number; node: TreeNode } | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [menu]);
+
+  /** The folder a drop on this row goes into: the folder itself, or a file's folder */
+  const folderOf = (node: TreeNode) => (node.folder ? node.path : node.path.split("/").slice(0, -1).join("/"));
+  const dragged = (event: DragEvent) => (event.dataTransfer.types.includes(ASSET_DRAG_TYPE) ? draggedPath.current : null);
+  const draggedPath = useRef<string | null>(null);
   const tree = useMemo(() => buildTree(paths), [paths]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["content"]));
   const [focused, setFocused] = useState<string | null>(selected);
@@ -169,15 +196,42 @@ export function Explorer({
             aria-level={depth + 1}
             aria-expanded={node.folder ? expanded.has(node.path) : undefined}
             aria-selected={node.path === focused}
-            className={`tree-row${node.path === focused ? " selected" : ""}${isModified ? " modified" : ""}`}
+            className={`tree-row${node.path === focused ? " selected" : ""}${isModified ? " modified" : ""}${node.folder && node.path === dropTarget ? " drop-target" : ""}`}
             title={node.path}
             onClick={() => activate(node)}
-            // Images can be dragged into the page being edited
-            draggable={!node.folder && IMAGE_FILE.test(node.name)}
+            onContextMenu={(event: MouseEvent) => {
+              event.preventDefault();
+              setFocused(node.path);
+              setMenu({ x: event.clientX, y: event.clientY, node });
+            }}
+            // Files can be dragged onto folders to move them, and images into the page being edited
+            draggable={!node.folder}
             onDragStart={(event) => {
+              draggedPath.current = node.path;
               event.dataTransfer.setData(ASSET_DRAG_TYPE, node.path);
               event.dataTransfer.setData("text/plain", node.path);
-              event.dataTransfer.effectAllowed = "copy";
+              event.dataTransfer.effectAllowed = IMAGE_FILE.test(node.name) ? "copyMove" : "move";
+            }}
+            onDragEnd={() => {
+              draggedPath.current = null;
+              setDropTarget(null);
+            }}
+            onDragOver={(event) => {
+              const path = dragged(event);
+              const folder = folderOf(node);
+              if (!path || !canMoveInto(path, folder)) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              if (dropTarget !== folder) setDropTarget(folder);
+            }}
+            onDragLeave={() => setDropTarget(null)}
+            onDrop={(event) => {
+              const path = dragged(event);
+              const folder = folderOf(node);
+              setDropTarget(null);
+              if (!path || !canMoveInto(path, folder)) return;
+              event.preventDefault();
+              onAction({ type: "move", path, folder });
             }}
           >
             <span className="indent" aria-hidden="true">
@@ -195,6 +249,35 @@ export function Explorer({
           </div>
         );
       })}
+      {menu && (
+        <div className="menu tree-menu" role="menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(event) => event.stopPropagation()}>
+          {(menu.node.folder ? menu.node.path === "content" || menu.node.path.startsWith("content/") : false) && (
+            <>
+              <button className="menu-item" role="menuitem" onClick={() => (setMenu(null), onAction({ type: "new", folder: menu.node.path, kind: "page" }))}>
+                <span className="codicon codicon-new-file" aria-hidden="true" /> New page here…
+              </button>
+              <button className="menu-item" role="menuitem" onClick={() => (setMenu(null), onAction({ type: "new", folder: menu.node.path, kind: "section" }))}>
+                <span className="codicon codicon-new-folder" aria-hidden="true" /> New section here…
+              </button>
+            </>
+          )}
+          {!menu.node.folder && (
+            <>
+              <button className="menu-item" role="menuitem" onClick={() => (setMenu(null), onAction({ type: "rename", path: menu.node.path }))}>
+                <span className="codicon codicon-edit" aria-hidden="true" /> Rename or move…
+              </button>
+              <button className="menu-item" role="menuitem" onClick={() => (setMenu(null), onAction({ type: "delete", path: menu.node.path }))}>
+                <span className="codicon codicon-trash" aria-hidden="true" /> Delete…
+              </button>
+            </>
+          )}
+          {menu.node.folder && !(menu.node.path === "content" || menu.node.path.startsWith("content/")) && (
+            <div className="menu-file" style={{ color: "var(--faint)" }}>
+              Drag files onto a folder to move them
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 Edit a [Zola](https://www.getzola.org) site's pages in the browser, in the site's own look.
 
-Open a public GitHub repository, pick a page under `content/`, and edit it in place: the page is
+Open a GitHub repository (or start a new site with a theme), pick a page under `content/`, and edit it in place: the page is
 built by Zola itself ([zola-wasi](https://github.com/gthmchttr/zola-wasi), running as WebAssembly
 in a worker) and shown with the site's real theme. Headings, paragraphs and lists are typed
 straight into the theme's markup, and theme components such as callouts or coloured text are
@@ -58,14 +58,40 @@ including the site's pages shown in the editor, which is why the service worker 
 Content-Security-Policy that blocks other origins' scripts and requests. For stronger isolation,
 serve the built site from a separate origin (not done yet).
 
+## Themes
+
+Any Zola 0.23 site works, with any theme or none: zdrafts edits pages inside whatever markup the
+theme renders. What it does to make that general:
+
+- Preview builds turn off `minify_html` (it would strip the markers that show where page content
+  goes) and keep each page's headings, so the theme's table of contents is right.
+- Components the theme's templates call (and pages don't), or that need template context such as
+  `page` or `config`, are left out of the `/` menu.
+- Collapsed `<details>` are opened while editing.
+- Theme submodules on Codeberg (and other Forgejo/Gitea servers) and GitLab load too, as archives.
+
+`src/themes/` can add hints for a theme (menu labels, CSS to show content it hides), but no theme
+needs an adapter. `tests/theme-survey.test.ts` builds a new site with each theme in a folder of
+theme repositories and checks the build, the editable pages and the components.
+
+## New sites
+
+**Start a new site with a theme** on the start screen picks one of the Zola theme gallery's themes
+(`src/themes/catalog.ts`: the ones that build and edit in zdrafts, at the commit they were tested
+at; themes on servers that don't let browsers download from them aren't listed). The new site has
+the theme under `themes/`, the theme's demo config and content (pages that can't build in a
+browser, e.g. ones that load data from the web, are left out), and a GitHub Pages workflow. It's
+kept in this browser until **Publish to GitHub** (in Changes) creates a repository with it, the
+theme as a git submodule, and turns on GitHub Pages; then it's edited from GitHub like any site.
+
 ## Status
 
-Early. Only tested setups are allowed:
+Early.
 
 | | Supported |
 | --- | --- |
 | Zola | 0.23.6 (from `ZOLA_VERSION` in the site's CI workflow, `netlify.toml` or `vercel.json`) |
-| Themes | [zola-yolk](https://github.com/gauthamchettiar/zola-yolk) (`src/themes/`) |
+| Themes | Any; 30 of the gallery's themes tested (see above) |
 
 Try it with [gthmchttr/gthmchttr.com](https://github.com/gthmchttr/gthmchttr.com).
 
@@ -73,9 +99,11 @@ Known limitations:
 
 - Components that transform their body (zola-yolk's `render`: Mermaid, math) are edited as source
   next to a preview.
+- A section page whose template lists its pages without its own content is edited in the Source view.
 - File contents come from `raw.githubusercontent.com` (public) or the API's blob endpoint
   (private repositories) and are cached in IndexedDB by blob SHA.
-- Pages can be edited and images added; creating pages, and deleting or renaming files, isn't supported yet.
+- In the explorer, pages and files can be created, renamed, moved (drag onto a folder) and deleted;
+  folders can't be moved yet. Links to a moved page (`@/…`) or static file (`/…`) are updated.
 
 ## Development
 

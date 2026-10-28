@@ -2,6 +2,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import { parseRepoInput, type GitHubErrorKind, type RepoRef } from "../repo/github.ts";
 import { getToken, onTokenChange } from "../repo/token.ts";
 import type { OpenProgress } from "./session.ts";
+import type { LocalSummary } from "../site/local.ts";
+import type { CatalogTheme } from "../themes/catalog.ts";
+import { ConfirmDialog } from "./Dialog.tsx";
+import { NewSite } from "./NewSite.tsx";
 import { TokenDialog } from "./TokenDialog.tsx";
 
 /** Why a token would help after a failed load, or null if it wouldn't */
@@ -45,18 +49,31 @@ export function Intro({
   errorKind,
   failed,
   onOpen,
+  localSites,
+  onOpenLocal,
+  onCreate,
+  onDeleteLocal,
 }: {
   recent: string[];
-  loading: { ref: RepoRef; progress: OpenProgress | null } | null;
+  loading: { label: string; progress: OpenProgress | null } | null;
   error?: string;
   errorKind?: GitHubErrorKind;
   /** The repository that failed to open */
   failed?: RepoRef;
   onOpen: (ref: RepoRef) => void;
+  /** Sites made in this browser */
+  localSites: LocalSummary[];
+  onOpenLocal: (id: string) => void;
+  onCreate: (theme: CatalogTheme, title: string) => void;
+  onDeleteLocal: (id: string) => void;
 }) {
   const [input, setInput] = useState("");
   const [invalid, setInvalid] = useState(false);
   const [dialog, setDialog] = useState<{ reason?: string; retry?: RepoRef } | null>(null);
+  const [creating, setCreating] = useState(false);
+  // Errors shown on the new-site screen are only those from creating a site
+  const [attempted, setAttempted] = useState(false);
+  const [removing, setRemoving] = useState<LocalSummary | null>(null);
   const [token, setTokenState] = useState(getToken);
   useEffect(() => onTokenChange(() => setTokenState(getToken())), []);
   const failedName = failed ? `${failed.owner}/${failed.repo}` : "";
@@ -70,6 +87,24 @@ export function Intro({
   };
 
   const status = loading ? describe(loading.progress) : null;
+
+  if (creating) {
+    return (
+      <NewSite
+        busy={!!loading}
+        progress={status ? status.label : undefined}
+        error={!loading && attempted ? error : undefined}
+        onCreate={(theme, title) => {
+          setAttempted(true);
+          onCreate(theme, title);
+        }}
+        onCancel={() => {
+          setCreating(false);
+          setAttempted(false);
+        }}
+      />
+    );
+  }
 
   return (
     <main className="intro">
@@ -97,7 +132,7 @@ export function Intro({
           </button>
         </form>
         <div className="hint">
-          {invalid ? "That doesn't look like a GitHub repository." : "Supported theme: zola-yolk on Zola 0.23. "}
+          {invalid ? "That doesn't look like a GitHub repository." : "Any Zola 0.23 site. "}
           {!invalid && (
             <button type="button" className="link-btn" onClick={() => setDialog({})}>
               {token ? `GitHub token: ${token.login}` : "Add a GitHub token"}
@@ -109,7 +144,7 @@ export function Intro({
         {status && (
           <div className="progress" role="status">
             <div className="progress-label">
-              {loading!.ref.owner}/{loading!.ref.repo}: {status.label}
+              {loading!.label}: {status.label}
             </div>
             <div className={`progress-bar${status.fraction === null ? " indeterminate" : ""}`}>
               <div style={status.fraction === null ? undefined : { width: `${Math.round(status.fraction * 100)}%` }} />
@@ -129,6 +164,22 @@ export function Intro({
             )}
           </div>
         )}
+        {removing && (
+          <ConfirmDialog
+            title={`Remove ${removing.title}?`}
+            confirm="Remove"
+            danger
+            onCancel={() => setRemoving(null)}
+            onConfirm={() => {
+              onDeleteLocal(removing.id);
+              setRemoving(null);
+            }}
+          >
+            {removing.published
+              ? `It's on GitHub as ${removing.published}; this only removes the copy in this browser.`
+              : "It isn't on GitHub, so it's gone for good, with any edits."}
+          </ConfirmDialog>
+        )}
         {dialog && (
           <TokenDialog
             reason={dialog.reason}
@@ -145,6 +196,37 @@ export function Intro({
 
         {!loading && (
           <>
+            <div className="intro-or">
+              <span>or</span>
+              <button type="button" className="btn secondary" onClick={() => setCreating(true)}>
+                <span className="codicon codicon-add" aria-hidden="true" /> Start a new site with a theme
+              </button>
+            </div>
+            {localSites.length > 0 && (
+              <>
+                <h2>In this browser</h2>
+                <ul className="recent local-sites">
+                  {localSites.map((site) => (
+                    <li key={site.id}>
+                      <button
+                        type="button"
+                        onClick={() => (site.published ? onOpen(parseRepoInput(site.published)!) : onOpenLocal(site.id))}
+                        title={site.published ? `Published to ${site.published}` : "Not on GitHub yet"}
+                      >
+                        <span className={`codicon codicon-${site.published ? "repo" : "browser"}`} aria-hidden="true" />
+                        {site.title}
+                        <span className="site-meta">
+                          {site.themeName} · {site.published ? `on GitHub as ${site.published}` : `made ${new Date(site.created).toLocaleDateString()}`}
+                        </span>
+                      </button>
+                      <button type="button" className="remove" title={`Remove ${site.title} from this browser`} onClick={() => setRemoving(site)}>
+                        <span className="codicon codicon-trash" aria-hidden="true" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             <h2>{recent.length ? "Recent" : "Try"}</h2>
             <ul className="recent">
               {(recent.length ? recent : [EXAMPLE]).map((name) => (

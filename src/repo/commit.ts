@@ -8,8 +8,10 @@ export interface CommitRequest {
   branch: string;
   /** The commit the edits were made on */
   base: string;
-  /** Path → new contents: text, or bytes for binary files (images) */
-  files: Map<string, string | Uint8Array>;
+  /** Path → new contents: text, or bytes for binary files (images); null deletes the file */
+  files: Map<string, string | Uint8Array | null>;
+  /** Submodules: path → the commit it points at (with a .gitmodules entry in `files`) */
+  gitlinks?: Map<string, string>;
   message: string;
 }
 
@@ -43,7 +45,8 @@ export async function commitFiles(request: CommitRequest): Promise<string> {
   // Text goes into the tree directly; binary files are uploaded as blobs first
   const entries = [];
   for (const [path, content] of files) {
-    if (typeof content === "string") entries.push({ path, mode: "100644", type: "blob", content });
+    if (content === null) entries.push({ path, mode: "100644", type: "blob", sha: null });
+    else if (typeof content === "string") entries.push({ path, mode: "100644", type: "blob", content });
     else {
       const blob = await api<{ sha: string }>(`/repos/${fullName}/git/blobs`, {
         method: "POST",
@@ -52,6 +55,7 @@ export async function commitFiles(request: CommitRequest): Promise<string> {
       entries.push({ path, mode: "100644", type: "blob", sha: blob.sha });
     }
   }
+  for (const [path, sha] of request.gitlinks ?? []) entries.push({ path, mode: "160000", type: "commit", sha });
   const tree = await api<{ sha: string }>(`/repos/${fullName}/git/trees`, {
     method: "POST",
     body: JSON.stringify({ base_tree: parent.tree.sha, tree: entries }),

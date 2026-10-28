@@ -95,6 +95,18 @@ describe("commitFiles", () => {
     });
   });
 
+  test("deletes files given as null", async () => {
+    const calls = fakeGitHub({ head: "base" });
+    await commitFiles({ ...request, files: new Map<string, string | Uint8Array | null>([["content/old.md", null], ["content/new.md", "# New\n"]]) });
+    expect(calls.find((c) => c.path.endsWith("/git/trees"))!.body).toEqual({
+      base_tree: "tree-of-head",
+      tree: [
+        { path: "content/old.md", mode: "100644", type: "blob", sha: null },
+        { path: "content/new.md", mode: "100644", type: "blob", content: "# New\n" },
+      ],
+    });
+  });
+
   test("refuses when the branch was rewritten", async () => {
     fakeGitHub({ head: "other", status: "diverged" });
     await expect(commitFiles(request)).rejects.toMatchObject({ kind: "conflict" });

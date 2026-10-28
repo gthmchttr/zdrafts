@@ -1,17 +1,26 @@
-// Drafts: edited files (text) and added files (bytes, e.g. dropped images), kept in IndexedDB per
-// repository so they survive reloads.
+// Drafts: edited files (text), added files (bytes, e.g. dropped images) and deleted files, kept in
+// IndexedDB per repository so they survive reloads.
 import { createStore, del, entries, set } from "idb-keyval";
 
 const store = typeof indexedDB === "undefined" ? undefined : createStore("zdrafts-drafts", "drafts");
 const SEP = "\u0000";
 
-export type Draft = string | Uint8Array;
+/** A file deleted (or moved away) */
+export interface Deleted {
+  deleted: true;
+}
+
+export type Draft = string | Uint8Array | Deleted;
+
+export const DELETED: Deleted = { deleted: true };
+
+export const isDeleted = (draft: Draft | undefined): draft is Deleted => typeof draft === "object" && draft !== null && !(draft instanceof Uint8Array) && draft.deleted === true;
 
 export class DraftStore {
   private drafts = new Map<string, Draft>();
 
   /** `repoKey` identifies the repository and branch, e.g. "gthmchttr/gthmchttr.com@main" */
-  constructor(private repoKey: string) {}
+  constructor(readonly repoKey: string) {}
 
   async load(): Promise<void> {
     if (!store) return;

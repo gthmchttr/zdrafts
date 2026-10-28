@@ -72,13 +72,17 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
-/** GitHub's form for a new fine-grained token, filled in with what zdrafts needs */
-export function newTokenUrl(owner?: string): string {
+/**
+ * GitHub's form for a new fine-grained token, filled in with what zdrafts needs: committing, or for
+ * publishing a new site also creating the repository, its deploy workflow and GitHub Pages.
+ */
+export function newTokenUrl(owner?: string, publish = false): string {
   const params = new URLSearchParams({
-    name: "zdrafts",
-    description: "Edit and commit Zola site content from zdrafts",
+    name: publish ? "zdrafts (publish)" : "zdrafts",
+    description: publish ? "Create and publish Zola sites from zdrafts" : "Edit and commit Zola site content from zdrafts",
     expires_in: "90",
     contents: "write",
+    ...(publish ? { administration: "write", workflows: "write", pages: "write" } : {}),
   });
   if (owner) params.set("target_name", owner);
   return `https://github.com/settings/personal-access-tokens/new?${params}`;

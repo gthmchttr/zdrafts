@@ -6,6 +6,7 @@ export function TokenDialog({
   reason,
   owner,
   repo,
+  publish,
   onSaved,
   onClose,
 }: {
@@ -15,6 +16,8 @@ export function TokenDialog({
   owner?: string;
   /** "owner/repo" the token should be given access to */
   repo?: string;
+  /** For publishing a new site: the token also creates repositories, workflows and Pages */
+  publish?: boolean;
   onSaved: (token: StoredToken) => void;
   onClose: () => void;
 }) {
@@ -82,11 +85,21 @@ export function TokenDialog({
         )}
         <ol className="dialog-steps">
           <li>
-            <a href={newTokenUrl(owner)} target="_blank" rel="noreferrer">
+            <a href={newTokenUrl(owner, publish)} target="_blank" rel="noreferrer">
               Create a fine-grained token on GitHub
             </a>
-            . Under <em>Repository access</em>, choose <em>Only select repositories</em> and pick {repo ? <strong>{repo}</strong> : "your site's repository"}.
-            <em> Contents: Read and write</em> is already selected.
+            .{" "}
+            {publish ? (
+              <>
+                Under <em>Repository access</em>, choose <em>All repositories</em> (a new repository can't be picked yet). Contents, Workflows,
+                Pages and Administration are already selected.
+              </>
+            ) : (
+              <>
+                Under <em>Repository access</em>, choose <em>Only select repositories</em> and pick {repo ? <strong>{repo}</strong> : "your site's repository"}.
+                <em> Contents: Read and write</em> is already selected.
+              </>
+            )}
           </li>
           <li>
             <label htmlFor="token-input">Paste it here:</label>

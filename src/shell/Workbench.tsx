@@ -4,10 +4,15 @@ import { splitFrontMatter } from "../markdown/frontmatter.ts";
 import { GitHubError } from "../repo/github.ts";
 import { getToken, onTokenChange } from "../repo/token.ts";
 import { CodeEditor } from "./CodeEditor.tsx";
-import { Explorer, fileIcon } from "./Explorer.tsx";
+import { ConfirmDialog, PromptDialog } from "./Dialog.tsx";
+import { Explorer, fileIcon, type ExplorerAction } from "./Explorer.tsx";
+import { canMoveInto } from "./files.ts";
+import { isSectionFile, isTranslation } from "../zola/probecontext.ts";
 import { FramePane, PreviewPane } from "./FramePane.tsx";
 import type { Session } from "./session.ts";
+import { PublishDialog } from "./PublishDialog.tsx";
 import { TokenDialog } from "./TokenDialog.tsx";
+import type { RepoRef } from "../repo/github.ts";
 
 type Mode = "visual" | "source";
 type View = "explorer" | "changes";
@@ -40,7 +45,9 @@ function download(name: string, data: Uint8Array, type: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Workbench({ session, onClose }: { session: Session; onClose: () => void }) {
+export function Workbench({ session, onClose, onOpenRepo }: { session: Session; onClose: () => void; onOpenRepo: (ref: RepoRef) => void }) {
+  const local = !!session.repo.local;
+  const [publishing, setPublishing] = useState(false);
   useSession(session);
   const draftKey = session.drafts.paths().join("\n");
   const explorerPaths = useMemo(() => session.explorerPaths(), [session, draftKey]);
@@ -60,6 +67,9 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
   const [toast, setToast] = useState<string | null>(null);
   const modified = new Set(session.drafts.paths());
   const added = new Set([...modified].filter((path) => session.isAdded(path)));
+  const deleted = new Set([...modified].filter((path) => session.isDeleted(path)));
+  // A dialog over the workbench: new page, rename/move, delete, close
+  const [dialog, setDialog] = useState<ExplorerAction | { type: "close" } | null>(null);
 
   const open = useCallback((path: string) => {
     setTabs((current) => (current.includes(path) ? current : [...current, path]));
@@ -76,11 +86,37 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
     [session, open],
   );
 
-  // Start on the first post, so there's something to see
+  // Reopen the tabs of last time; else start on the first post, so there's something to see
+  const tabsKey = `zdrafts.tabs:${session.drafts.repoKey}`;
   useEffect(() => {
-    const first = session.contentPages.find((path) => session.pages.has(path) && !path.endsWith("_index.md")) ?? session.contentPages[0];
+    try {
+      const saved = JSON.parse(localStorage.getItem(tabsKey) ?? "null") as { tabs: string[]; active: string | null } | null;
+      const kept = saved?.tabs.filter((path) => !path.startsWith(PREVIEW) && session.exists(path)) ?? [];
+      if (kept.length) {
+        setTabs(kept);
+        setActive(saved?.active && kept.includes(saved.active) ? saved.active : kept[0]);
+        return;
+      }
+    } catch {
+      // Nothing saved, or storage is blocked
+    }
+    // A page in the visual editor with something in it, in the default language if there are translations
+    const visual = session.contentPages.filter((path) => session.pages.has(path) && !isSectionFile(path));
+    const written = (path: string) => splitFrontMatter(session.text(path)).body.trim().length > 200;
+    const first =
+      visual.find((path) => !isTranslation(path) && written(path)) ?? visual.find((path) => !isTranslation(path)) ?? visual[0] ?? session.contentPages[0];
     if (first) open(first);
-  }, [session, open]);
+  }, [session, open, tabsKey]);
+
+  useEffect(() => {
+    // (Not before the first tab opens, which would forget last time's)
+    if (!tabs.length) return;
+    try {
+      localStorage.setItem(tabsKey, JSON.stringify({ tabs, active }));
+    } catch {
+      // Storage is blocked: tabs just aren't remembered
+    }
+  }, [tabsKey, tabs, active]);
 
   const closeTab = (path: string) => {
     setTabs((current) => {
@@ -89,6 +125,28 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
       return next;
     });
   };
+
+  /** Replace a tab's file (after a move) */
+  const retab = (from: string, to: string) => {
+    setTabs((current) => current.map((tab) => (tab === from ? to : tab)));
+    setActive((current) => (current === from ? to : current));
+  };
+
+  const onExplorerAction = (action: ExplorerAction) => {
+    if (action.type === "move") {
+      const to = `${action.folder}/${action.path.split("/").pop()}`;
+      session.move(action.path, to).then(
+        (updated) => {
+          retab(action.path, to);
+          notify(`Moved to ${action.folder}${updated ? `; links updated in ${updated} page${updated > 1 ? "s" : ""}` : ""}`);
+        },
+        (error: Error) => notify(error.message),
+      );
+    } else setDialog(action);
+  };
+
+  /** Where "New page" goes: the open page's folder, or content/ */
+  const newPageFolder = () => (active?.startsWith("content/") ? active.split("/").slice(0, -1).join("/") : "content");
 
   const notify = (message: string) => {
     setToast(message);
@@ -157,14 +215,18 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
           zdrafts
         </span>
         <span className="repo">
-          <a href={repoUrl} target="_blank" rel="noreferrer">
-            {session.repo.owner}/{session.repo.repo} — {session.repo.ref}
-          </a>
+          {local ? (
+            <span title="Made in this browser; not on GitHub yet">{session.repo.repo} — in this browser</span>
+          ) : (
+            <a href={repoUrl} target="_blank" rel="noreferrer">
+              {session.repo.owner}/{session.repo.repo} — {session.repo.ref}
+            </a>
+          )}
         </span>
         <button className="icon-btn" aria-pressed={panelOpen} title="Page settings (front matter)" onClick={() => setPanelOpen((v) => !v)}>
           <span className="codicon codicon-settings" aria-hidden="true" />
         </button>
-        <button className="icon-btn" title="Open another site" onClick={onClose}>
+        <button className="icon-btn" title="Open another site" onClick={() => setDialog({ type: "close" })}>
           <span className="codicon codicon-close" aria-hidden="true" />
         </button>
       </header>
@@ -188,12 +250,21 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
       </nav>
 
       <aside className="sidebar" hidden={view !== "explorer"}>
-        <div className="sidebar-title">Explorer</div>
+        <div className="sidebar-title">
+          Explorer
+          <span className="spacer" />
+          <button className="icon-btn" title="New page" onClick={() => setDialog({ type: "new", folder: newPageFolder(), kind: "page" })}>
+            <span className="codicon codicon-new-file" aria-hidden="true" />
+          </button>
+          <button className="icon-btn" title="New section" onClick={() => setDialog({ type: "new", folder: newPageFolder(), kind: "section" })}>
+            <span className="codicon codicon-new-folder" aria-hidden="true" />
+          </button>
+        </div>
         <div className="section-header">
           <span className="codicon codicon-chevron-down" aria-hidden="true" />
           {session.repo.repo}
         </div>
-        <Explorer paths={explorerPaths} selected={active} modified={modified} added={added} onOpen={open} />
+        <Explorer paths={explorerPaths} selected={active} modified={modified} added={added} onOpen={open} onAction={onExplorerAction} />
       </aside>
       {view === "changes" && (
         <aside className="sidebar">
@@ -204,36 +275,45 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
               <span className="codicon codicon-desktop-download" aria-hidden="true" />
             </button>
           </div>
-          <form
-            className="commit-box"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void commit();
-            }}
-          >
-            <textarea
-              aria-label="Commit message"
-              placeholder={modified.size ? `Message (${defaultMessage()})` : "Message"}
-              rows={2}
-              value={commitMessage}
-              onChange={(event) => setCommitMessage(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void commit();
-                }
+          {local ? (
+            <div className="local-box">
+              This site is in this browser only. Publishing puts it in a new GitHub repository, with everything you've changed.
+              <button type="button" className="btn" onClick={() => setPublishing(true)}>
+                <span className="codicon codicon-cloud-upload" aria-hidden="true" /> Publish to GitHub…
+              </button>
+            </div>
+          ) : (
+            <form
+              className="commit-box"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void commit();
               }}
-            />
-            <button type="submit" className="btn" disabled={modified.size === 0 || committing} title={`Commit and push to ${session.repo.fullName}`}>
-              <span className={`codicon ${committing ? "codicon-sync spin" : "codicon-check"}`} aria-hidden="true" />
-              {committing ? "Committing…" : `Commit to ${session.repo.ref}`}
-            </button>
-            {commitError && (
-              <div className="error-box" role="alert">
-                {commitError}
-              </div>
-            )}
-          </form>
+            >
+              <textarea
+                aria-label="Commit message"
+                placeholder={modified.size ? `Message (${defaultMessage()})` : "Message"}
+                rows={2}
+                value={commitMessage}
+                onChange={(event) => setCommitMessage(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    void commit();
+                  }
+                }}
+              />
+              <button type="submit" className="btn" disabled={modified.size === 0 || committing} title={`Commit and push to ${session.repo.fullName}`}>
+                <span className={`codicon ${committing ? "codicon-sync spin" : "codicon-check"}`} aria-hidden="true" />
+                {committing ? "Committing…" : `Commit to ${session.repo.ref}`}
+              </button>
+              {commitError && (
+                <div className="error-box" role="alert">
+                  {commitError}
+                </div>
+              )}
+            </form>
+          )}
           <div className="section-header">
             <span className="codicon codicon-chevron-down" aria-hidden="true" />
             Drafts
@@ -247,7 +327,13 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
                 const icon = fileIcon(path);
                 const slash = path.lastIndexOf("/");
                 return (
-                  <div key={path} role="listitem" className={`change-row${path === active ? " selected" : ""}`} onClick={() => open(path)} title={path}>
+                  <div
+                    key={path}
+                    role="listitem"
+                    className={`change-row${path === active ? " selected" : ""}${deleted.has(path) ? " deleted" : ""}`}
+                    onClick={() => !deleted.has(path) && open(path)}
+                    title={deleted.has(path) ? `${path} (deleted)` : path}
+                  >
                     <span className={`file-icon codicon codicon-${icon.icon} ${icon.className}`} aria-hidden="true" />
                     <span className="name">{path.slice(slash + 1)}</span>
                     <span className="dir">{path.slice(0, slash)}</span>
@@ -259,7 +345,7 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
                         <span className="codicon codicon-discard" aria-hidden="true" />
                       </button>
                     </span>
-                    <span className="status">{added.has(path) ? "A" : "M"}</span>
+                    <span className="status">{deleted.has(path) ? "D" : added.has(path) ? "A" : "M"}</span>
                   </div>
                 );
               })}
@@ -326,10 +412,17 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
       {panelOpen && active?.endsWith(".md") && <PagePanel key={active} session={session} path={active} />}
 
       <footer className="statusbar">
-        <span className="item" title={`Commit ${session.repo.commit}`}>
-          <span className="codicon codicon-git-branch" aria-hidden="true" />
-          {session.repo.ref}
-        </span>
+        {local ? (
+          <button className="item" onClick={() => setPublishing(true)} title="Publish to GitHub">
+            <span className="codicon codicon-browser" aria-hidden="true" />
+            In this browser
+          </button>
+        ) : (
+          <span className="item" title={`Commit ${session.repo.commit}`}>
+            <span className="codicon codicon-git-branch" aria-hidden="true" />
+            {session.repo.ref}
+          </span>
+        )}
         <button className="item" onClick={() => setTokenDialog({})} title={token ? "GitHub token" : "Add a GitHub token to commit"}>
           <span className="codicon codicon-account" aria-hidden="true" />
           {token ? token.login : "No GitHub token"}
@@ -353,6 +446,80 @@ export function Workbench({ session, onClose }: { session: Session; onClose: () 
           {session.theme.name}
         </span>
       </footer>
+      {dialog?.type === "new" && (
+        <PromptDialog
+          title={dialog.kind === "page" ? "New page" : "New section"}
+          label="Title"
+          hint={`In ${dialog.folder}/. The file name comes from the title; you can rename it later.`}
+          confirm="Create"
+          onCancel={() => setDialog(null)}
+          onSubmit={async (title) => {
+            const path = await session.createPage(dialog.folder, title, dialog.kind);
+            setDialog(null);
+            open(path);
+          }}
+        />
+      )}
+      {dialog?.type === "rename" && (
+        <PromptDialog
+          title="Rename or move"
+          label="Path"
+          initial={dialog.path}
+          hint="Change the name, or the folders to move it. Links to it in other pages are updated."
+          confirm="Rename"
+          validate={(to) => {
+            if (to === dialog.path) return "That's where it is now.";
+            const folder = to.split("/").slice(0, -1).join("/");
+            if (!canMoveInto(dialog.path, folder) && folder !== dialog.path.split("/").slice(0, -1).join("/")) return dialog.path.endsWith(".md") ? "Pages stay under content/." : "Files go under content/ or static/.";
+            if (dialog.path.endsWith(".md") && !to.endsWith(".md")) return "A page's name ends with .md.";
+            return session.exists(to) ? `${to} already exists.` : null;
+          }}
+          onCancel={() => setDialog(null)}
+          onSubmit={async (to) => {
+            const updated = await session.move(dialog.path, to);
+            retab(dialog.path, to);
+            setDialog(null);
+            notify(`Renamed${updated ? `; links updated in ${updated} page${updated > 1 ? "s" : ""}` : ""}`);
+          }}
+        />
+      )}
+      {dialog?.type === "delete" && (
+        <ConfirmDialog
+          title={`Delete ${dialog.path.split("/").pop()}?`}
+          confirm="Delete"
+          danger
+          onCancel={() => setDialog(null)}
+          onConfirm={() => {
+            const path = dialog.path;
+            setDialog(null);
+            void session.remove(path).then(() => {
+              closeTab(path);
+              notify(`Deleted ${path.split("/").pop()}; discard it in Changes to bring it back`);
+            });
+          }}
+        >
+          {session.isAdded(dialog.path) ? "It was added here and hasn't been committed, so it's gone for good." : "It's deleted from the site when you commit. Until then, discarding the change in Changes brings it back."}
+        </ConfirmDialog>
+      )}
+      {publishing && (
+        <PublishDialog
+          session={session}
+          onClose={() => setPublishing(false)}
+          onOpenRepo={(owner, name) => {
+            setPublishing(false);
+            onOpenRepo({ owner, repo: name });
+          }}
+        />
+      )}
+      {dialog?.type === "close" && (
+        <ConfirmDialog title={`Close ${session.repo.repo}?`} confirm="Close" onCancel={() => setDialog(null)} onConfirm={onClose}>
+          {local
+            ? "The site stays in this browser; open it again from the start screen."
+            : modified.size
+              ? `Your ${modified.size} uncommitted change${modified.size > 1 ? "s stay" : " stays"} in this browser; they'll be here when you open the site again.`
+              : "You can open it again from the start screen."}
+        </ConfirmDialog>
+      )}
       {tokenDialog && (
         <TokenDialog
           reason={tokenDialog.reason}
@@ -461,7 +628,8 @@ function PagePanel({ session, path }: { session: Session; path: string }) {
     : "";
   const saveRef = useRef(debounce((value: string) => {
     const body = splitFrontMatter(session.text(path)).body;
-    const frontMatter = `${delimiter}\n${value}${value.endsWith("\n") || value === "" ? "" : "\n"}${delimiter}\n`;
+    const eol = split.frontMatter.includes("\r\n") ? "\r\n" : "\n";
+    const frontMatter = `${delimiter}${eol}${value}${value.endsWith("\n") || value === "" ? "" : eol}${delimiter}${eol}`;
     void session.saveText(path, frontMatter + body);
   }, 600));
   return (
