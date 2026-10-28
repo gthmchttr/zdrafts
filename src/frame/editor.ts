@@ -14,7 +14,7 @@ import { zolaHandlers } from "../markdown/remark-zola.ts";
 import { encodeTera } from "../markdown/tera.ts";
 import type { ComponentInfo } from "../zola/components.ts";
 import { assetPlugin, type Assets } from "./assets.ts";
-import { codeBlocks } from "./codeblock.ts";
+import { codeBlocks, codeBlockWithMeta } from "./codeblock.ts";
 import { htmlBlock, htmlInline, rawHtmlView, remarkHtmlPlugin } from "./htmlnodes.ts";
 import { menus } from "./menus.ts";
 import { COMPONENT_ATTR, inlineTextKeys, probeRefresh, probeRefreshKey, remarkZolaPlugin, zolaNodes, zolaViews, type EditorEnv } from "./nodes.ts";
@@ -102,6 +102,7 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
     })
     .use(commonmark)
     .use(image)
+    .use(codeBlockWithMeta)
     .use(gfm)
     .config((ctx) => ctx.set(remarkGFMPlugin.options.key, { tablePipeAlign: false }))
     .use(history)
@@ -145,6 +146,13 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
     const expected = splitBlocks(message.body)?.length;
     const got = splitBlocks(baseline)?.length;
     if (expected !== undefined && got !== undefined && got < expected) {
+      // Which block didn't come through, for whoever looks at the console
+      const words = (text: string) => text.replace(/[^\p{L}\p{N}]+/gu, "").slice(0, 24);
+      const original = splitBlocks(message.body)!.map((block) => message.body.slice(block.start, block.end));
+      const serialized = baseline;
+      const read = splitBlocks(serialized)!.map((block) => words(serialized.slice(block.start, block.end)));
+      const missing = original.filter((block) => !read.includes(words(block)));
+      console.warn("zdrafts: blocks the editor couldn't read:", missing.map((block) => block.slice(0, 160)));
       view.setProps({ editable: () => false });
       const note = doc.createElement("p");
       note.className = "zd-error";

@@ -55,3 +55,4 @@ pre.zd-tera-block { padding: .5em .75em; white-space: pre-wrap; }
 .zd-root [data-zd-html].ProseMirror-selectednode { outline: 2px solid #3b82f6; }
 .zd-root .zd-summary { cursor: default; user-select: none; }
 .zd-raw-html { display: inline-block; outline: 1px dashed rgba(127, 127, 127, .45); outline-offset: 2px; }
+.zd-raw-block { display: block; }

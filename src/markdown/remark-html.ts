@@ -63,6 +63,12 @@ function transform(parent: Parent) {
       const start = stack[s];
       stack.length = s;
       const inner = items.splice(start + 1).map(plain);
+      // An empty element (<progress></progress>) has no content to edit: it stays HTML
+      if (!inner.length) {
+        items[start] = plain(opener);
+        items.push({ type: "html", value: tag.raw });
+        return true;
+      }
       const node = block
         ? ({ type: "htmlContainer", tag: tag.name, attrs: opener.open.attrs, close: tag.raw, children: inner, ...(opener.summary ? { summary: opener.summary } : {}) } as HtmlContainer)
         : ({ type: "htmlInline", tag: tag.name, attrs: opener.open.attrs, close: tag.raw, children: inner } as HtmlInline);
@@ -85,8 +91,10 @@ function transform(parent: Parent) {
       continue;
     }
     const tags = onlyTags(child.value);
+    // An element opened and closed within one block of HTML has no Markdown inside: it stays HTML
+    const closedInside = tags?.some((tag, i) => !tag.closing && !tag.single && tags[i + 1]?.closing && tags[i + 1].name === tag.name);
     // Inline, a tag is one html node; in blocks, one html node may hold several tags on lines of their own
-    if (!tags || (!block && tags.length !== 1)) {
+    if (!tags || closedInside || (!block && tags.length !== 1)) {
       items.push(child);
       continue;
     }

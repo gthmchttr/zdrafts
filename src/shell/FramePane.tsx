@@ -46,7 +46,7 @@ export function FramePane({
           if (message.path === path) await session.saveBody(path, message.body);
           break;
         case "probe": {
-          const results = await session.probe(message.calls);
+          const results = await session.probe(message.calls, path);
           send({ type: "probe-result", id: message.id, results: [...results] });
           break;
         }

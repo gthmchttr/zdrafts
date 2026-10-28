@@ -6,6 +6,8 @@
 // Files are cached in IndexedDB by git blob SHA and trees by commit, so a reload only asks GitHub
 // for the branch's latest commit and downloads what changed.
 import { createStore, entries as storeEntries, get, getMany, set, setMany } from "idb-keyval";
+import { downloadArchive, parseRemote, type Remote } from "./hosts.ts";
+import { resolveSymlinks } from "./symlinks.ts";
 import { getToken } from "./token.ts";
 
 export interface RepoRef {
@@ -41,6 +43,8 @@ export interface LoadedRepo {
   submodules: Map<string, { source: string; commit: string }>;
   /** Set when GitHub couldn't be asked for the latest commit and the last one seen was used */
   stale?: string;
+  /** A site made in this browser and not on GitHub (yet): its id in src/site/local.ts */
+  local?: string;
 }
 
 export type Progress =
@@ -143,7 +147,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 interface TreeResponse {
   sha: string;
   truncated: boolean;
-  tree: { path: string; type: "blob" | "tree" | "commit"; sha: string; size?: number }[];
+  /** mode 120000: a symbolic link (the blob holds its target) */
+  tree: { path: string; mode?: string; type: "blob" | "tree" | "commit"; sha: string; size?: number }[];
 }
 
 async function listTree(source: string, commit: string): Promise<TreeResponse["tree"]> {
@@ -237,14 +242,16 @@ async function raw(source: string, commit: string, path: string, sha: string): P
   }
 }
 
-/** Submodule paths → GitHub "owner/repo", from .gitmodules */
-function parseGitmodules(text: string): Map<string, string> {
-  const out = new Map<string, string>();
+/** Submodule paths → where they come from, from .gitmodules */
+export function parseGitmodules(text: string, owner: string): Map<string, Remote> {
+  const out = new Map<string, Remote>();
   for (const section of text.split(/^\[submodule /m).slice(1)) {
     const path = /^\s*path\s*=\s*(.+?)\s*$/m.exec(section)?.[1];
-    const url = /^\s*url\s*=\s*(.+?)\s*$/m.exec(section)?.[1];
-    const github = url && /github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(url);
-    if (path && github) out.set(path, `${github[1]}/${github[2]}`);
+    let url = /^\s*url\s*=\s*(.+?)\s*$/m.exec(section)?.[1];
+    // Relative to the repository itself: ../theme.git is a sibling on GitHub
+    if (url?.startsWith("../")) url = `https://github.com/${owner}/${url.slice(3)}`;
+    const remote = url ? parseRemote(url) : null;
+    if (path && remote) out.set(path, remote);
   }
   return out;
 }
@@ -264,26 +271,45 @@ export async function loadRepo(ref: RepoRef, onProgress: (progress: Progress) =>
   const submoduleCommits = tree.filter((item) => item.type === "commit");
   const gitmodulesEntry = tree.find((item) => item.path === ".gitmodules");
   const gitmodules = submoduleCommits.length && gitmodulesEntry ? new TextDecoder().decode(await raw(info.full_name, commit, ".gitmodules", gitmodulesEntry.sha)) : "";
-  const submoduleSources = parseGitmodules(gitmodules);
+  const submoduleSources = parseGitmodules(gitmodules, ref.owner);
+  // Submodules on other hosts (Codeberg, GitLab…) come as archives
+  const archived = new Map<string, Uint8Array>();
+  // Symbolic links, resolved once everything is downloaded
+  const links: string[] = [];
 
   for (const item of tree) {
     if (item.type === "blob" && !SKIP.test(item.path)) {
       entries.push({ path: item.path, sha: item.sha, size: item.size ?? 0, source: info.full_name, commit, sourcePath: item.path });
+      if (item.mode === "120000") links.push(item.path);
     }
   }
   for (const sub of submoduleCommits) {
-    const source = submoduleSources.get(sub.path);
-    if (!source) continue; // not on GitHub: the site will build without it, or report what's missing
+    const remote = submoduleSources.get(sub.path);
+    if (!remote) continue; // unknown host: the site will build without it, or report what's missing
+    if (remote.host !== "github") {
+      onProgress({ stage: "listing", detail: `Downloading ${remote.url} (${sub.path})` });
+      submodules.set(sub.path, { source: remote.url, commit: sub.sha });
+      for (const [path, data] of await downloadArchive(remote, sub.sha)) {
+        if (SKIP.test(path)) continue;
+        archived.set(`${sub.path}/${path}`, data);
+        entries.push({ path: `${sub.path}/${path}`, sha: "", size: data.length, source: remote.url, commit: sub.sha, sourcePath: path });
+      }
+      continue;
+    }
+    const source = remote.path;
     onProgress({ stage: "listing", detail: `Listing ${source} (${sub.path})` });
     submodules.set(sub.path, { source, commit: sub.sha });
     for (const item of await listTree(source, sub.sha)) {
       if (item.type === "blob" && !SKIP.test(item.path)) {
         entries.push({ path: `${sub.path}/${item.path}`, sha: item.sha, size: item.size ?? 0, source, commit: sub.sha, sourcePath: item.path });
+        if (item.mode === "120000") links.push(`${sub.path}/${item.path}`);
       }
     }
   }
 
-  const files = await downloadEntries(entries, onProgress);
+  const files = await downloadEntries(entries.filter((entry) => !archived.has(entry.path)), onProgress);
+  for (const [path, data] of archived) files.set(path, data);
+  resolveSymlinks(files, links);
   onProgress({ stage: "done" });
   return { owner: ref.owner, repo: ref.repo, fullName, private: head.private, ref: branch, commit, entries, files, submodules, stale };
 }
@@ -317,5 +343,19 @@ async function downloadEntries(entries: RepoEntry[], onProgress: (progress: Prog
     }),
   );
   if (blobStore && fresh.length) await setMany(fresh, blobStore).catch(() => {});
+  return files;
+}
+
+/** All files of a GitHub repository at a commit (a theme for a new site) */
+export async function downloadGitHub(source: string, commit: string, onProgress: (progress: Progress) => void): Promise<Map<string, Uint8Array>> {
+  const entries: RepoEntry[] = [];
+  const links: string[] = [];
+  for (const item of await listTree(source, commit)) {
+    if (item.type !== "blob" || SKIP.test(item.path)) continue;
+    entries.push({ path: item.path, sha: item.sha, size: item.size ?? 0, source, commit, sourcePath: item.path });
+    if (item.mode === "120000") links.push(item.path);
+  }
+  const files = await downloadEntries(entries, onProgress);
+  resolveSymlinks(files, links);
   return files;
 }

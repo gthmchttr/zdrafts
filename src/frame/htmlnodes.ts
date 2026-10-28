@@ -94,8 +94,10 @@ export const rawHtmlView = $view(htmlSchema.node, () => (node: ProseNode, view) 
   const doc = view.dom.ownerDocument;
   const value: string = node.attrs.value ?? "";
   const lone = /^\s*<\/?[A-Za-z][^>]*>\s*$/.test(value);
-  const dom = doc.createElement(lone ? "code" : "span");
-  dom.className = lone ? "zd-component zd-tera" : "zd-raw-html";
+  // HTML that starts with a block element (a whole <p>, <div>, <table>…) takes the width of the page
+  const block = !lone && /^\s*<(p|div|table|section|figure|blockquote|ul|ol|dl|pre|h[1-6]|details|aside|nav|header|footer|article|hr)[\s>/]/i.test(value);
+  const dom = doc.createElement(lone ? "code" : block ? "div" : "span");
+  dom.className = lone ? "zd-component zd-tera" : block ? "zd-raw-html zd-raw-block" : "zd-raw-html";
   dom.contentEditable = "false";
   dom.title = `HTML: ${value.trim().slice(0, 200)}\nEdit it in the Source view.`;
   if (lone) dom.textContent = value.trim();

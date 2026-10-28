@@ -17,16 +17,27 @@ function addStyle(css: string) {
   document.head.append(style);
 }
 
-/** Swap the content marker Zola rendered (see src/zola/chrome.ts) for the editor's root */
+/**
+ * Swap the stand-in content Zola rendered (see src/zola/chrome.ts) for the editor's root: the
+ * start marker, the headings after it and the end marker.
+ */
 function mountPoint(): HTMLElement | null {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if ((node as Comment).data === `zdrafts:content:${path}`) {
-      const root = document.createElement("div");
-      root.className = "zd-root";
-      node.parentNode!.replaceChild(root, node);
-      return root;
+    if ((node as Comment).data !== `zdrafts:content:${path}`) continue;
+    const root = document.createElement("div");
+    root.className = "zd-root";
+    const end = `zdrafts:end:${path}`;
+    // The end marker is a sibling, unless the theme moved content around; then only the marker goes
+    let next = node.nextSibling;
+    const between: ChildNode[] = [];
+    while (next && !(next.nodeType === Node.COMMENT_NODE && (next as Comment).data === end)) {
+      between.push(next);
+      next = next.nextSibling;
     }
+    if (next) [...between, next].forEach((child) => child.remove());
+    node.parentNode!.replaceChild(root, node);
+    return root;
   }
   return null;
 }

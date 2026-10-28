@@ -5,7 +5,7 @@ import { wrapInList } from "@milkdown/kit/prose/schema-list";
 import { Plugin, PluginKey, TextSelection, type EditorState } from "@milkdown/kit/prose/state";
 import type { EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
-import { defaultArgs, type ComponentInfo } from "../zola/components.ts";
+import { defaultArgs, isTemplateOnly, type ComponentInfo } from "../zola/components.ts";
 import type { ThemeInfo } from "./protocol.ts";
 import { currentBlock, makeCollapsible, makeColumns, setAlignment, setBox, type Block } from "./htmlcommands.ts";
 import type { Overlay } from "./overlay.ts";
@@ -159,7 +159,7 @@ export function slashItems(components: Map<string, ComponentInfo>, theme: ThemeI
   // Theme components: blocks, then inline ones, each A to Z
   const sorted = [...components.values()].sort((a, b) => Number(!a.block) - Number(!b.block) || a.name.localeCompare(b.name));
   for (const component of sorted) {
-    if (hidden.has(component.name) || component.params.some((p) => p.type === "map" && p.default === null)) continue;
+    if (hidden.has(component.name) || isTemplateOnly(component)) continue;
     const hint = theme.componentHints[component.name] ?? {};
     const args = defaultArgs(component);
     const base = {

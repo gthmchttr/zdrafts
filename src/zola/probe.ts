@@ -28,13 +28,13 @@ export interface ProbeResult {
   error?: string;
 }
 
-export const PROBE_CONTENT = "content/__zdrafts__/probe.md";
 export const SLOT_COMMENT = "zdrafts:slot";
 export const textSlot = (n: number) => `zdrafts-slot-${n}`;
 
 export const probeKey = (call: ProbeCall) => `${call.kind}\u0000${call.name}\u0000${call.args}`;
 
-export function probePage(calls: ProbeCall[]): string {
+/** The probe page's Markdown: `frontMatter` sets how it renders (see probecontext.ts) */
+export function probePage(calls: ProbeCall[], frontMatter = '+++\ntitle = "zdrafts probe"\n+++\n'): string {
   const parts = calls.map((call, n) => {
     if (call.kind === "code") {
       // A fence longer than any run of backticks in the code
@@ -48,7 +48,8 @@ export function probePage(calls: ProbeCall[]): string {
     const args = call.kind === "text" ? setStringAttr(call.args, "text", textSlot(n)) : call.args;
     return `<div data-zdrafts-probe="${n}">${inlineTag(call.name, args)}</div>`;
   });
-  return `+++\ntitle = "zdrafts probe"\n+++\n\n${parts.join("\n\n")}\n`;
+  // A heading, for templates that expect a table of contents
+  return `${frontMatter}\n# zdrafts probe\n\n${parts.join("\n\n")}\n`;
 }
 
 /** Read each call's result out of the probe page's HTML (needs a DOM: runs in the page) */

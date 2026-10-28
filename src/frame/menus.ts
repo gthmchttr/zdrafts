@@ -19,7 +19,7 @@ import { CellSelection, deleteColumn, deleteRow, deleteTable, isInTable, selecte
 import type { EditorView } from "@milkdown/kit/prose/view";
 import { $prose, callCommand } from "@milkdown/kit/utils";
 import { setStringAttr } from "../markdown/tera.ts";
-import { defaultArgs, type ComponentInfo } from "../zola/components.ts";
+import { defaultArgs, isTemplateOnly, type ComponentInfo } from "../zola/components.ts";
 import {
   addColumn,
   ALIGNMENTS,
@@ -117,7 +117,7 @@ export function menus(env: MenuEnv) {
     if (from === to || $from.parent !== $to.parent || !$from.parent.isTextblock) return [];
     const hidden = new Set(env.theme.hiddenComponents);
     return [...env.components.values()]
-      .filter((component) => component.textParam && !component.block && !hidden.has(component.name))
+      .filter((component) => component.textParam && !component.block && !hidden.has(component.name) && !isTemplateOnly(component))
       .map((component) => ({
         label: component.name,
         icon: "component",
@@ -451,6 +451,17 @@ export function menus(env: MenuEnv) {
           destroy: () => overlay.hideToolbar(),
         }),
         props: {
+          // A paragraph or heading selected as a block (with its grip): typing goes on at its end
+          // instead of replacing it. Delete and Backspace still remove the block.
+          handleTextInput(view, _from, _to, text) {
+            const { selection } = view.state;
+            if (!(selection instanceof NodeSelection) || !selection.node.isTextblock) return false;
+            const end = selection.from + selection.node.nodeSize - 1;
+            // Plain text: not part of a link or other mark the block happens to end with
+            const tr = view.state.tr.insert(end, view.state.schema.text(text));
+            view.dispatch(tr.setSelection(TextSelection.create(tr.doc, end + text.length)).setStoredMarks([]).scrollIntoView());
+            return true;
+          },
           handleDOMEvents: {
             contextmenu(view, event) {
               if (event.shiftKey) return false; // the browser's own menu

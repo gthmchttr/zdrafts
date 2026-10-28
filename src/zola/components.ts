@@ -19,6 +19,10 @@ export interface ComponentInfo {
   /** Has a plain string `text` parameter, so its text can be edited in place */
   textParam: boolean;
   file: string;
+  /** Called from the site's or theme's templates */
+  usedInTemplates: boolean;
+  /** Called from the site's content */
+  usedInContent: boolean;
 }
 
 const COMPONENT = /\{%-?\s*component\s+([A-Za-z_][\w.]*)\s*\(([\s\S]*?)\)\s*-?%\}([\s\S]*?)\{%-?\s*endcomponent\b/g;
@@ -73,7 +77,22 @@ export function indexComponents(files: Map<string, Uint8Array>): Map<string, Com
         block: /\bbody\b/.test(body),
         textParam: !!text && (text.type === null || text.type === "string"),
         file: path,
+        usedInTemplates: false,
+        usedInContent: false,
       });
+    }
+  }
+  // Where each is called: {{ <name … /> }} or {% <name …> %}
+  for (const [path, data] of files) {
+    const template = /(^|\/)templates\/.+\.(html|xml|txt|md)$/.test(path);
+    const content = path.startsWith("content/") && path.endsWith(".md");
+    if (!template && !content) continue;
+    const text = decoder.decode(data);
+    for (const match of text.matchAll(/(?:\{\{|\{%)-?\s*<([A-Za-z_][\w.]*)/g)) {
+      const component = components.get(match[1]);
+      if (!component) continue;
+      if (template) component.usedInTemplates = true;
+      else component.usedInContent = true;
     }
   }
   return components;
@@ -98,4 +117,19 @@ export function defaultArgs(component: ComponentInfo): string {
       }
     })
     .join("");
+}
+
+/** Parameters that are template context: a component needing one is used by templates, not pages */
+const CONTEXT_PARAMS = new Set(["page", "section", "config", "paginator", "term", "taxonomy", "lang", "current_path", "current_url", "macros", "pages", "subsections"]);
+
+/**
+ * Whether a component is a building block of the theme's templates rather than something to put
+ * in a page: templates call it and pages don't, it needs template context (the page, the
+ * config…) or a map, or it's named privately.
+ */
+export function isTemplateOnly(component: ComponentInfo): boolean {
+  if (component.name.split(".").some((part) => part.startsWith("_"))) return true;
+  // The theme's templates call it, and no page does
+  if (component.usedInTemplates && !component.usedInContent) return true;
+  return component.params.some((p) => !p.implicit && p.default === null && (CONTEXT_PARAMS.has(p.name) || p.type === "map"));
 }

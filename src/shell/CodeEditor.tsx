@@ -4,7 +4,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { defaultHighlightStyle, HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { toml } from "@codemirror/legacy-modes/mode/toml";
 import { yaml } from "@codemirror/legacy-modes/mode/yaml";
-import { EditorState } from "@codemirror/state";
+import { Annotation, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { useEffect, useRef } from "react";
@@ -43,6 +43,9 @@ function language(lang: CodeLanguage) {
   return StreamLanguage.define(lang === "toml" ? toml : yaml);
 }
 
+/** Marks a change that comes from outside (a discarded draft…), not from typing */
+const External = Annotation.define<boolean>();
+
 export function CodeEditor({
   value,
   language: lang,
@@ -58,12 +61,15 @@ export function CodeEditor({
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // CodeMirror works with \n; a file with \r\n line endings keeps them when saved
+  const eol = useRef(value.includes("\r\n") ? "\r\n" : "\n");
+  const normal = (text: string) => text.replace(/\r\n/g, "\n");
 
   useEffect(() => {
     view.current = new EditorView({
       parent: host.current!,
       state: EditorState.create({
-        doc: value,
+        doc: normal(value),
         extensions: [
           lineNumbers(),
           highlightActiveLine(),
@@ -76,7 +82,10 @@ export function CodeEditor({
           theme,
           EditorView.contentAttributes.of({ "aria-label": label }),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) onChangeRef.current(update.state.doc.toString());
+            // Only the person's edits: following an outside change isn't one
+            if (update.docChanged && !update.transactions.some((tr) => tr.annotation(External))) {
+              onChangeRef.current(update.state.doc.toString().replace(/\n/g, eol.current));
+            }
           }),
         ],
       }),
@@ -89,8 +98,8 @@ export function CodeEditor({
   // Follow outside changes (e.g. discarding a draft) without losing the cursor when they're ours
   useEffect(() => {
     const current = view.current;
-    if (current && current.state.doc.toString() !== value) {
-      current.dispatch({ changes: { from: 0, to: current.state.doc.length, insert: value } });
+    if (current && current.state.doc.toString() !== normal(value)) {
+      current.dispatch({ changes: { from: 0, to: current.state.doc.length, insert: normal(value) }, annotations: External.of(true) });
     }
   }, [value]);
 

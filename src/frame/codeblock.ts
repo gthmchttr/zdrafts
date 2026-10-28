@@ -9,7 +9,36 @@ import { $prose, $view } from "@milkdown/kit/utils";
 import type { ProbeCall, ProbeResult } from "../zola/probe.ts";
 import { probeRefreshKey, type EditorEnv } from "./nodes.ts";
 
-const codeCall = (node: ProseNode): ProbeCall => ({ kind: "code", name: String(node.attrs.language ?? ""), args: node.textContent });
+/** The fence's info string: the language and, after it, Zola's options (linenos, hl_lines=…) */
+const infoString = (node: ProseNode) => [node.attrs.language, node.attrs.meta].filter(Boolean).join(" ");
+
+const codeCall = (node: ProseNode): ProbeCall => ({ kind: "code", name: infoString(node), args: node.textContent });
+
+/**
+ * Code blocks keep the whole info string: Milkdown keeps only the language, which would drop
+ * Zola's options (```rust, linenos, hl_lines=3-4) when the page is saved.
+ */
+export const codeBlockWithMeta = codeBlockSchema.extendSchema((schema) => (ctx) => {
+  const spec = schema(ctx);
+  return {
+    ...spec,
+    attrs: { ...spec.attrs, meta: { default: "" } },
+    parseMarkdown: {
+      ...spec.parseMarkdown,
+      runner: (state, node, type) => {
+        state.openNode(type, { language: String(node.lang ?? ""), meta: String(node.meta ?? "") });
+        if (typeof node.value === "string" && node.value) state.addText(node.value);
+        state.closeNode();
+      },
+    },
+    toMarkdown: {
+      ...spec.toMarkdown,
+      runner: (state, node) => {
+        state.addNode("code", undefined, node.content.firstChild?.text || "", { lang: node.attrs.language || null, meta: node.attrs.meta || null });
+      },
+    },
+  };
+});
 
 interface Highlight {
   /** <pre> and <code> attributes (Zola's class and colours) */

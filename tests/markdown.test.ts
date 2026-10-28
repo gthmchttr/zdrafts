@@ -187,6 +187,12 @@ describe("html", () => {
     same(body);
   });
 
+  test("empty elements stay HTML", () => {
+    const body = '<progress></progress>\n<progress value="33" max="100"></progress>\n\nText with <span></span> nothing.\n';
+    expect(types(parse(body)).filter((type) => type !== "html")).toEqual([]);
+    same(body);
+  });
+
   test("unpaired tags and raw HTML stay as they are", () => {
     const body = "<div>\n\nNever closed\n\n<p>Some <b>raw</b> html</p>\n\nA lone </span> here.\n";
     expect(types(parse(body))).toEqual(["html", "html", "html"]);

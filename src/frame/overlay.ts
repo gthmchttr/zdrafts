@@ -58,12 +58,14 @@ button:disabled .glyph { color: #5a5a5a; }
 .toolbar button:hover { background: #3a3d41; }
 .toolbar button.on { background: #04395e; color: #fff; }
 .toolbar .sep { width: 1px; background: #454545; margin: 4px 3px; }
-.grip { width: 18px; height: 24px; display: grid; place-items: center; color: #8b8b8b; border-radius: 4px; cursor: grab; user-select: none; background: rgba(37, 37, 38, .6); }
+.grip { width: 16px; height: 24px; display: grid; place-items: center; color: #8b8b8b; border-radius: 4px; cursor: grab; user-select: none; background: rgba(37, 37, 38, .6); }
 .grip svg { width: 16px; height: 16px; }
 .grip:hover { background: #3a3d41; color: #e7e7e7; }
 .grip:active { cursor: grabbing; }
 .grip[hidden] { display: none; }
 `;
+
+const GRIP_WIDTH = 16;
 
 export interface ContextItem {
   label: string;
@@ -354,9 +356,11 @@ export class Overlay {
 
   showGrip(block: Element) {
     const rect = block.getBoundingClientRect();
-    // Beside the block's first line
+    // In the margin beside the block's first line; never over its content (a click there would
+    // select the whole block), so with too little margin there's no grip
+    if (rect.left < GRIP_WIDTH + 1) return this.hideGrip();
     const line = Math.min(rect.height, 24);
-    this.grip.style.left = `${Math.max(2, rect.left - 24)}px`;
+    this.grip.style.left = `${Math.max(0, rect.left - GRIP_WIDTH - 6)}px`;
     this.grip.style.top = `${rect.top + Math.max(0, (line - 24) / 2)}px`;
     this.grip.hidden = false;
   }
