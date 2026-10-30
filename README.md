@@ -32,6 +32,10 @@ rendered by the theme and edited inline.
   page. Images can also be dragged in from the explorer.
 - The site's `zola.toml` can be edited too; the site rebuilds with it.
 - Page settings (front matter) and a Source view per file.
+- A View mode per page: the site as `zola build` makes it, with your drafts applied (real page
+  bodies, the config as it is, the theme's scripts, links that work), rebuilt as you change
+  things. Draft pages show as `zola serve --drafts` would. It opens in a new tab too, under `/view/`.
+  Scripts from other origins are still blocked there (see GitHub token, below).
 - Edits are kept as drafts in the browser (IndexedDB) per repository, marked in the explorer and
   listed in the Changes view, where they can be committed to the branch, downloaded as a zip,
   copied as Markdown or discarded.

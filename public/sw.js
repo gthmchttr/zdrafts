@@ -1,7 +1,9 @@
-// zdrafts service worker: serves the in-browser build of the site under /site/.
+// zdrafts service worker: serves the in-browser builds of the site: the editing build under /site/
+// and the view build (the site as `zola build` makes it) under /view/.
 //
 // The page writes each build's output into Cache Storage (src/shell/site-cache.ts); this serves it
-// so the site's own CSS, fonts, images and links work in the preview iframe. A page requested with
+// so the site's own CSS, fonts, images and links work in the preview iframe. View pages are served as
+// built, scripts included; links that leave /view/ (root-relative ones a theme hardcodes) are kept in it. A page requested with
 // ?zdrafts-edit=<content path> is served for editing: the theme's scripts are removed (they would
 // rewrite the editable DOM; inline <head> scripts stay) and the zdrafts editor is injected. One requested with ?zdrafts-preview
 // keeps its scripts and only gets its link clicks handed to zdrafts.
@@ -9,7 +11,8 @@
 // Site pages run on zdrafts' origin, where the GitHub token is stored (src/repo/token.ts), so every
 // page gets a Content-Security-Policy: only scripts from this origin (the site's own and the
 // editor), and no requests to other origins (analytics, embeds' scripts…).
-const CACHE = "zdrafts-site";
+// Keep in sync with src/shell/site-cache.ts
+const CACHES = { "/site/": "zdrafts-site", "/view/": "zdrafts-view" };
 const FRAME_ENTRY = new URL(self.location.href).searchParams.get("frame") || "/frame.js";
 
 self.addEventListener("install", () => self.skipWaiting());
@@ -17,12 +20,16 @@ self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim(
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin || !url.pathname.startsWith("/site/")) return;
-  event.respondWith(serve(url));
+  if (url.origin !== self.location.origin) return;
+  // The site's home without its slash (base_url has none): "/view" → "/view/"
+  if (`${url.pathname}/` in CACHES) return event.respondWith(Response.redirect(`${url.pathname}/${url.search}${url.hash}`, 302));
+  const prefix = Object.keys(CACHES).find((prefix) => url.pathname.startsWith(prefix));
+  if (!prefix) return;
+  event.respondWith(serve(url, prefix));
 });
 
-async function serve(url) {
-  const cache = await caches.open(CACHE);
+async function serve(url, prefix) {
+  const cache = await caches.open(CACHES[prefix]);
   const path = decodeURI(url.pathname);
   const candidates = path.endsWith("/") ? [`${path}index.html`] : [path, `${path}/index.html`];
   let response;
@@ -37,8 +44,10 @@ async function serve(url) {
     });
   }
   if (!(response.headers.get("content-type") || "").startsWith("text/html")) return response;
-  const edit = url.searchParams.get("zdrafts-edit");
   let html = await response.text();
+  // At the end, not in <head>: a minified page may have no </head>, and nothing may go before its doctype
+  if (prefix === "/view/") return htmlResponse(`${html}<script>${VIEW_LINKS}</script>`, PREVIEW_POLICY);
+  const edit = url.searchParams.get("zdrafts-edit");
   if (!edit) return htmlResponse(inject(html, `<script>${LINKS}</script>`), PREVIEW_POLICY);
   // Inline scripts in <head> stay: they set the page up before it's drawn (dark mode, the skin's
   // stylesheet) and don't touch content, which doesn't exist yet. Everything else goes: external
@@ -78,6 +87,18 @@ const LINKS = `document.addEventListener("click", (event) => {
   event.preventDefault();
   parent.postMessage({ type: "navigate", href: link.href }, location.origin);
 }, true);`;
+
+// In the view, the site's links work as on the real site: within /view/, other sites in a new tab
+const VIEW_LINKS = `document.addEventListener("click", (event) => {
+  const link = event.target.closest && event.target.closest("a[href]");
+  if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+  if (link.origin !== location.origin) {
+    if (window.top !== window) { event.preventDefault(); window.open(link.href, "_blank", "noopener"); }
+  } else if (link.pathname !== "/view" && !link.pathname.startsWith("/view/")) {
+    event.preventDefault();
+    location.href = "/view" + link.pathname + link.search + link.hash;
+  }
+});`;
 
 function inject(html, tags) {
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${tags}</head>`) : tags + html;

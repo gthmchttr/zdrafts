@@ -43,8 +43,8 @@ self.onmessage = async ({ data }: MessageEvent<WorkerRequest>) => {
     }
     for (const [path, value] of processed) if (!files.has(path)) files.set(path, value);
     const started = performance.now();
-    // Draft pages (draft = true) are what people edit most, so they're always built
-    const result = await (await zola!).build({ files, baseUrl: data.baseUrl, drafts: true });
+    // Draft pages (draft = true) are what people edit most, so editing builds always include them
+    const result = await (await zola!).build({ files, baseUrl: data.baseUrl, drafts: data.drafts });
     if (result.ok) {
       for (const [path, value] of result.files) {
         // A copy: the output buffers are transferred to the page below

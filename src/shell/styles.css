@@ -353,6 +353,10 @@ button { font: inherit; color: inherit; }
   line-height: 1.6;
 }
 .empty .codicon { font-size: 64px; display: block; margin: 0 auto 12px; opacity: .4; }
+.view-pane { height: 100%; display: flex; flex-direction: column; }
+.view-pane iframe { flex: 1; height: auto; min-height: 0; }
+.view-pane .empty { flex: 1; height: auto; }
+.view-errors { max-width: 80ch; max-height: 50vh; overflow: auto; margin: 12px 0 0; text-align: left; font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; color: #f2b8b5; }
 .image-view { height: 100%; overflow: auto; display: grid; place-items: center; padding: 24px; background: repeating-conic-gradient(#2a2a2a 0 25%, #1f1f1f 0 50%) 0 0 / 16px 16px; }
 .image-view img { max-width: 100%; max-height: 100%; box-shadow: 0 0 0 1px var(--border); }
 .image-meta { position: absolute; bottom: 8px; right: 12px; color: var(--muted); font-size: 12px; background: #000a; padding: 2px 8px; border-radius: 4px; }

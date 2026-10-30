@@ -12,9 +12,16 @@ import { ZolaClient } from "../zola/client.ts";
 import { indexComponents, type ComponentInfo } from "../zola/components.ts";
 import { parseProbe, probeKey, probePage, type ProbeCall, type ProbeResult } from "../zola/probe.ts";
 import { probeContext, type ProbeContext } from "../zola/probecontext.ts";
-import { registerServiceWorker, SiteCache, SITE_PREFIX } from "./site-cache.ts";
+import { fingerprint, registerServiceWorker, SiteCache, SITE_PREFIX, VIEW_PREFIX } from "./site-cache.ts";
 
 export type OpenProgress = Progress | { stage: "building" };
+
+/** A view build: whether it worked, Zola's errors, and the output's paths */
+export interface ViewBuild {
+  ok: boolean;
+  errors: string[];
+  files: Set<string>;
+}
 
 export interface BuildStatus {
   state: "idle" | "building" | "ok" | "failed";
@@ -44,6 +51,9 @@ export class Session {
   /** How components are probed for each page (see src/zola/probecontext.ts), with the probe page's folder */
   private probeContexts = new Map<string, ProbeContext & { dir: string }>();
   private cache = new SiteCache();
+  private viewCache = new SiteCache("zdrafts-view", VIEW_PREFIX);
+  /** The last view build, by what it was built from (viewKey) */
+  private view: { key: string; build: Promise<ViewBuild> } | null = null;
   private listeners = new Set<() => void>();
   private building: Promise<void> | null = null;
   private rebuildQueued = false;
@@ -418,6 +428,42 @@ export class Session {
     if (fresh) await this.rebuild();
     if (this.building) await this.building;
     return new Map(calls.map((call) => [probeKey(call), this.probes.get(contextKey(context.id, call)) ?? { html: "", slot: false, error: "Not rendered" }]));
+  }
+
+  /** What a view build depends on: the commit, the drafts and whether draft pages are built */
+  viewKey(drafts: boolean): string {
+    const files = this.drafts.paths().map((path) => {
+      const data = this.bytes(path);
+      return `${path}:${data ? fingerprint(data) : "-"}`;
+    });
+    return [this.repo.commit, drafts, ...files].join("\n");
+  }
+
+  /**
+   * Build the site as `zola build` would, with the drafts applied: real page bodies, the config as
+   * it is (minify_html included), no editor and no probe pages. Draft pages (draft = true) are left
+   * out unless `drafts`, as `zola serve --drafts` does. Published to /view/; the same inputs
+   * aren't built twice.
+   */
+  buildView(drafts: boolean): Promise<ViewBuild> {
+    const key = this.viewKey(drafts);
+    if (this.view?.key === key) return this.view.build;
+    const overrides = new Map<string, Uint8Array | null>();
+    for (const path of this.drafts.paths()) overrides.set(path, this.bytes(path) ?? null);
+    const previous = this.view?.build;
+    const build = this.zola.build(overrides, `${location.origin}${VIEW_PREFIX}`, drafts).then(async (result) => {
+      // Builds finish in order; so do their writes to the cache
+      await previous;
+      if (result.ok) await this.viewCache.write(result.files);
+      return { ok: result.ok, errors: result.stderr, files: new Set(result.files.keys()) };
+    });
+    this.view = { key, build };
+    return build;
+  }
+
+  /** The view's URL of an output file ("posts/a/index.html" → "/view/posts/a/") */
+  static viewUrlOf(output: string): string {
+    return `${VIEW_PREFIX}/${output.replace(/index\.html$/, "")}`;
   }
 
   /** URL of a content page in the preview, or null if its template doesn't show its content */

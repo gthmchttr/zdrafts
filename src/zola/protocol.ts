@@ -1,7 +1,7 @@
 // Messages between the page and the Zola worker
 export type WorkerRequest =
   | { type: "init"; zola: string; assetBase: string; files: [string, Uint8Array][] }
-  | { type: "build"; id: number; baseUrl: string; overrides: [string, Uint8Array | null][] };
+  | { type: "build"; id: number; baseUrl: string; drafts: boolean; overrides: [string, Uint8Array | null][] };
 
 export type WorkerResponse =
   | { type: "ready" }

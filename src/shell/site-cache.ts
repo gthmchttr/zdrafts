@@ -1,8 +1,9 @@
-// Writes a build's output into Cache Storage, where public/sw.js serves it under /site/.
+// Writes a build's output into Cache Storage, where public/sw.js serves it: the editing build under
+// /site/, the view build (the site as `zola build` makes it) under /view/.
 // Only files that changed since the last write are touched, so rebuilding is cheap.
 
-const CACHE = "zdrafts-site";
 export const SITE_PREFIX = "/site";
+export const VIEW_PREFIX = "/view";
 
 const TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",
@@ -35,7 +36,7 @@ export function contentType(path: string): string {
 }
 
 /** A cheap fingerprint to tell whether a file changed (FNV-1a over the bytes, plus length) */
-function fingerprint(data: Uint8Array): string {
+export function fingerprint(data: Uint8Array): string {
   let hash = 0x811c9dc5;
   for (let i = 0; i < data.length; i++) hash = Math.imul(hash ^ data[i], 0x01000193);
   return `${data.length}:${(hash >>> 0).toString(16)}`;
@@ -44,26 +45,31 @@ function fingerprint(data: Uint8Array): string {
 export class SiteCache {
   private written = new Map<string, string>();
 
-  /** Make the cache hold exactly `files` (paths relative to the site root) */
+  /** Keep in sync with the caches public/sw.js serves each prefix from */
+  constructor(
+    private cacheName = "zdrafts-site",
+    private prefix = SITE_PREFIX,
+  ) {}
+
   /**
    * Publish a build's output. With `complete` false, `files` are added to what's published (a new
    * image, before the next build) instead of replacing it.
    */
   async write(files: Map<string, Uint8Array>, complete = true): Promise<void> {
-    if (this.written.size === 0 && complete) await caches.delete(CACHE);
-    const cache = await caches.open(CACHE);
+    if (this.written.size === 0 && complete) await caches.delete(this.cacheName);
+    const cache = await caches.open(this.cacheName);
     const writes: Promise<void>[] = [];
     for (const [path, data] of files) {
       const print = fingerprint(data);
       if (this.written.get(path) === print) continue;
       this.written.set(path, print);
       const body = new Blob([data as BlobPart], { type: contentType(path) });
-      writes.push(cache.put(`${SITE_PREFIX}/${path}`, new Response(body, { headers: { "content-type": contentType(path) } })));
+      writes.push(cache.put(`${this.prefix}/${path}`, new Response(body, { headers: { "content-type": contentType(path) } })));
     }
     for (const path of complete ? [...this.written.keys()] : []) {
       if (!files.has(path)) {
         this.written.delete(path);
-        writes.push(cache.delete(`${SITE_PREFIX}/${path}`).then(() => {}));
+        writes.push(cache.delete(`${this.prefix}/${path}`).then(() => {}));
       }
     }
     await Promise.all(writes);

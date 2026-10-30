@@ -30,14 +30,14 @@ export class ZolaClient {
     return this.ready;
   }
 
-  /** Build the repository's files with `overrides` applied (null deletes a file) */
-  build(overrides: Map<string, Uint8Array | null>, baseUrl: string): Promise<BuildResult> {
+  /** Build the repository's files with `overrides` applied (null deletes a file), draft pages included unless `drafts` is false */
+  build(overrides: Map<string, Uint8Array | null>, baseUrl: string, drafts = true): Promise<BuildResult> {
     const run = async () => {
       await this.ready;
       const id = this.nextId++;
       return new Promise<BuildResult>((resolve) => {
         this.pending.set(id, resolve);
-        const message: WorkerRequest = { type: "build", id, baseUrl, overrides: [...overrides] };
+        const message: WorkerRequest = { type: "build", id, baseUrl, drafts, overrides: [...overrides] };
         this.worker.postMessage(message);
       });
     };
