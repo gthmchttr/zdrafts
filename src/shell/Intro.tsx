@@ -51,6 +51,8 @@ export function Intro({
   onOpen,
   localSites,
   onOpenLocal,
+  creating,
+  onNewSite,
   onCreate,
   onDeleteLocal,
 }: {
@@ -64,13 +66,15 @@ export function Intro({
   /** Sites made in this browser */
   localSites: LocalSummary[];
   onOpenLocal: (id: string) => void;
+  /** Whether the new-site screen (/new) is showing; onNewSite opens or leaves it */
+  creating: boolean;
+  onNewSite: (open: boolean) => void;
   onCreate: (theme: CatalogTheme, title: string) => void;
   onDeleteLocal: (id: string) => void;
 }) {
   const [input, setInput] = useState("");
   const [invalid, setInvalid] = useState(false);
   const [dialog, setDialog] = useState<{ reason?: string; retry?: RepoRef } | null>(null);
-  const [creating, setCreating] = useState(false);
   // Errors shown on the new-site screen are only those from creating a site
   const [attempted, setAttempted] = useState(false);
   const [removing, setRemoving] = useState<LocalSummary | null>(null);
@@ -99,7 +103,7 @@ export function Intro({
           onCreate(theme, title);
         }}
         onCancel={() => {
-          setCreating(false);
+          onNewSite(false);
           setAttempted(false);
         }}
       />
@@ -198,7 +202,7 @@ export function Intro({
           <>
             <div className="intro-or">
               <span>or</span>
-              <button type="button" className="btn secondary" onClick={() => setCreating(true)}>
+              <button type="button" className="btn secondary" onClick={() => onNewSite(true)}>
                 <span className="codicon codicon-add" aria-hidden="true" /> Start a new site with a theme
               </button>
             </div>

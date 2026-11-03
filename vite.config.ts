@@ -1,8 +1,18 @@
+import { copyFile } from "node:fs/promises";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // Screens have their own paths (/new, /owner/repo: src/shell/routes.ts). Static hosts like
+    // GitHub Pages serve 404.html for paths they don't have, so it's the app too.
+    {
+      name: "spa-fallback",
+      apply: "build",
+      writeBundle: ({ dir }) => copyFile(`${dir}/index.html`, `${dir}/404.html`),
+    },
+  ],
   worker: { format: "es" },
   build: {
     target: "es2022",

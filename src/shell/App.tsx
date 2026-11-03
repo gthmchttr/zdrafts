@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GitHubError, parseRepoInput, type GitHubErrorKind, type RepoRef } from "../repo/github.ts";
+import { GitHubError, type GitHubErrorKind, type RepoRef } from "../repo/github.ts";
 import { Intro } from "./Intro.tsx";
+import { routeFromUrl, routePath, type Route } from "./routes.ts";
 import { createLocalSite, deleteLocalSite, listLocalSites, type LocalSummary } from "../site/local.ts";
 import type { CatalogTheme } from "../themes/catalog.ts";
 import { Session, SiteError, type OpenProgress } from "./session.ts";
@@ -30,26 +31,20 @@ function rememberRecent(name: string) {
   }
 }
 
-/** ?repo=owner/name opens a site straight away, so links to a site work */
-function repoFromUrl(): RepoRef | null {
-  const param = new URLSearchParams(location.search).get("repo");
-  return param ? parseRepoInput(param) : null;
-}
-
-/** ?local=<id>: a site made in this browser */
-const localFromUrl = () => new URLSearchParams(location.search).get("local");
-
-function setUrl(key: "repo" | "local" | null, value = "") {
-  const url = new URL(location.href);
-  url.searchParams.delete("repo");
-  url.searchParams.delete("local");
-  if (key) url.searchParams.set(key, value);
-  history.replaceState(null, "", url);
+/** Show `route`'s URL; `replace` when it stands for the same screen (a new site getting its id) */
+function setUrl(route: Route, replace = false) {
+  const path = routePath(route);
+  if (path === location.pathname + location.search) return;
+  if (replace) history.replaceState(null, "", path);
+  else history.pushState(null, "", path);
 }
 
 export function App() {
   const [state, setState] = useState<State>({ screen: "intro" });
+  const [creating, setCreating] = useState(false);
   const opening = useRef(0);
+  // The open site, closed when another screen's URL is shown (Back)
+  const current = useRef<Session | null>(null);
 
   const [localSites, setLocalSites] = useState<LocalSummary[]>([]);
   const refreshLocal = useCallback(() => void listLocalSites().then(setLocalSites, () => setLocalSites([])), []);
@@ -64,6 +59,8 @@ export function App() {
         if (opening.current === attempt) setState({ screen: "loading", label, progress });
       });
       if (opening.current !== attempt) return session.dispose();
+      current.current?.dispose();
+      current.current = session;
       setState({ screen: "workbench", session });
     } catch (error) {
       if (opening.current !== attempt) return;
@@ -80,7 +77,7 @@ export function App() {
   const open = useCallback(
     async (ref: RepoRef) => {
       const name = `${ref.owner}/${ref.repo}${ref.ref ? `@${ref.ref}` : ""}`;
-      setUrl("repo", name);
+      setUrl({ kind: "repo", ref });
       await start(`${ref.owner}/${ref.repo}`, async (onProgress) => {
         const session = await Session.open(ref, onProgress);
         rememberRecent(name);
@@ -92,7 +89,7 @@ export function App() {
 
   const openLocal = useCallback(
     async (id: string) => {
-      setUrl("local", id);
+      setUrl({ kind: "local", id });
       await start("Your site", (onProgress) => Session.openLocal(id, onProgress));
     },
     [start],
@@ -104,7 +101,7 @@ export function App() {
       await start(title, async (onProgress) => {
         const site = await createLocalSite(theme, title, onProgress);
         id = site.id;
-        setUrl("local", id);
+        setUrl({ kind: "local", id }, true);
         refreshLocal();
         return Session.openLocal(site.id, onProgress);
       });
@@ -112,22 +109,46 @@ export function App() {
     [start, refreshLocal],
   );
 
-  useEffect(() => {
-    const ref = repoFromUrl();
-    const local = localFromUrl();
-    if (ref) void open(ref);
-    else if (local) void openLocal(local);
-  }, [open, openLocal]);
-
-  const close = useCallback(() => {
+  /** Leave the open site (or stop opening one) for the start screen */
+  const leave = useCallback(() => {
     opening.current++;
-    if (state.screen === "workbench") state.session.dispose();
-    setUrl(null);
+    current.current?.dispose();
+    current.current = null;
     refreshLocal();
     setState({ screen: "intro" });
-  }, [state, refreshLocal]);
+  }, [refreshLocal]);
 
-  if (state.screen === "workbench") return <Workbench session={state.session} onClose={close} onOpenRepo={(ref) => (state.session.dispose(), void open(ref))} />;
+  /** Show the screen of the URL: on load, and on Back and Forward */
+  const show = useCallback(
+    (route: Route) => {
+      // The URL in its usual form (/owner/repo for ?repo=owner/repo), so opening doesn't add a history entry
+      setUrl(route, true);
+      setCreating(route.kind === "new");
+      if (route.kind === "repo") void open(route.ref);
+      else if (route.kind === "local") void openLocal(route.id);
+      else leave();
+    },
+    [open, openLocal, leave],
+  );
+
+  useEffect(() => {
+    const onPop = () => show(routeFromUrl(new URL(location.href)));
+    onPop();
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [show]);
+
+  const close = useCallback(() => {
+    setUrl({ kind: "home" });
+    leave();
+  }, [leave]);
+
+  const newSite = useCallback((open: boolean) => {
+    setUrl({ kind: open ? "new" : "home" });
+    setCreating(open);
+  }, []);
+
+  if (state.screen === "workbench") return <Workbench session={state.session} onClose={close} onOpenRepo={(ref) => (leave(), void open(ref))} />;
   return (
     <Intro
       recent={readRecent()}
@@ -138,6 +159,8 @@ export function App() {
       onOpen={open}
       localSites={localSites}
       onOpenLocal={(id) => void openLocal(id)}
+      creating={creating}
+      onNewSite={newSite}
       onCreate={(theme, title) => void create(theme, title)}
       onDeleteLocal={(id) => void deleteLocalSite(id).then(refreshLocal)}
     />

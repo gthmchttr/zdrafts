@@ -26,6 +26,20 @@ function previewTitle(tab: string): string {
   return path || "home";
 }
 
+/** Phone-sized screens: one thing at a time, with the views in a bar at the bottom. Keep in sync with styles.css */
+const NARROW = "(max-width: 720px)";
+
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => matchMedia(NARROW).matches);
+  useEffect(() => {
+    const query = matchMedia(NARROW);
+    const onChange = () => setNarrow(query.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return narrow;
+}
+
 function useSession(session: Session) {
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   useEffect(() => session.subscribe(rerender), [session]);
@@ -55,9 +69,12 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
   const [tabs, setTabs] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [modes, setModes] = useState<Record<string, Mode>>({});
-  const [panelOpen, setPanelOpen] = useState(true);
+  // On a phone the explorer, changes and page settings each take the whole screen, over the editor,
+  // so they start closed and close again once something is picked
+  const narrow = useNarrow();
+  const [panelOpen, setPanelOpen] = useState(() => !matchMedia(NARROW).matches);
   // The sidebar's view; clicking the active view's icon hides the sidebar, as in VS Code
-  const [view, setView] = useState<View | null>("explorer");
+  const [view, setView] = useState<View | null>(() => (matchMedia(NARROW).matches ? null : "explorer"));
   const [token, setTokenState] = useState(getToken);
   useEffect(() => onTokenChange(() => setTokenState(getToken())), []);
   const [tokenDialog, setTokenDialog] = useState<{ reason?: string; then?: () => void } | null>(null);
@@ -76,6 +93,18 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
     setTabs((current) => (current.includes(path) ? current : [...current, path]));
     setActive(path);
   }, []);
+
+  /** Open a file from the explorer or changes; on a phone that also shows the editor */
+  const pick = useCallback(
+    (path: string) => {
+      open(path);
+      if (narrow) {
+        setView(null);
+        setPanelOpen(false);
+      }
+    },
+    [open, narrow],
+  );
 
   const navigate = useCallback(
     (href: string) => {
@@ -200,7 +229,20 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
     }
   };
 
-  const toggleView = (next: View) => setView((current) => (current === next ? null : next));
+  const toggleView = (next: View) => {
+    setView((current) => (current === next ? null : next));
+    if (narrow) setPanelOpen(false);
+  };
+  const togglePanel = () => {
+    setPanelOpen((open) => !open);
+    if (narrow) setView(null);
+  };
+  /** On a phone: back to the page being edited, closing whatever covers it */
+  const showEditor = () => {
+    setView(null);
+    setPanelOpen(false);
+  };
+  const editorShown = !view && !(panelOpen && active?.endsWith(".md"));
 
   const mode: Mode = (active && modes[active]) || "visual";
   const isMarkdown = !!active && active.endsWith(".md");
@@ -224,7 +266,12 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
             </a>
           )}
         </span>
-        <button className="icon-btn" aria-pressed={panelOpen} title="Page settings (front matter)" onClick={() => setPanelOpen((v) => !v)}>
+        {narrow && status.state !== "ok" && status.state !== "idle" && (
+          <button className="icon-btn" title={status.state === "failed" ? "Show build errors" : "Building…"} onClick={() => setLogOpen((v) => !v)}>
+            <span className={`codicon ${status.state === "building" ? "codicon-sync spin" : "codicon-error error"}`} aria-hidden="true" />
+          </button>
+        )}
+        <button className="icon-btn wide-only" aria-pressed={panelOpen} title="Page settings (front matter)" onClick={togglePanel}>
           <span className="codicon codicon-settings" aria-hidden="true" />
         </button>
         <button className="icon-btn" title="Open another site" onClick={() => setDialog({ type: "close" })}>
@@ -233,8 +280,13 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
       </header>
 
       <nav className="activity" aria-label="Views">
+        <button className={`narrow-only${editorShown ? " active" : ""}`} title="Editor" aria-pressed={editorShown} onClick={showEditor}>
+          <span className="codicon codicon-edit" aria-hidden="true" />
+          <span className="activity-label">Edit</span>
+        </button>
         <button className={view === "explorer" ? "active" : ""} title="Explorer" aria-pressed={view === "explorer"} onClick={() => toggleView("explorer")}>
           <span className="codicon codicon-files" aria-hidden="true" />
+          <span className="activity-label">Files</span>
         </button>
         <button
           className={view === "changes" ? "active" : ""}
@@ -243,10 +295,22 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
           onClick={() => toggleView("changes")}
         >
           <span className="codicon codicon-source-control" aria-hidden="true" />
+          <span className="activity-label">Changes</span>
           {modified.size > 0 && <span className="badge activity-badge">{modified.size}</span>}
+        </button>
+        <button
+          className={`narrow-only${panelOpen && active?.endsWith(".md") ? " active" : ""}`}
+          title="Page settings (front matter)"
+          aria-pressed={panelOpen}
+          disabled={!active?.endsWith(".md")}
+          onClick={togglePanel}
+        >
+          <span className="codicon codicon-settings" aria-hidden="true" />
+          <span className="activity-label">Settings</span>
         </button>
         <button className="activity-bottom" title={token ? `GitHub: ${token.login}` : "Add a GitHub token"} onClick={() => setTokenDialog({})}>
           <span className="codicon codicon-account" aria-hidden="true" />
+          <span className="activity-label">Account</span>
         </button>
       </nav>
 
@@ -265,7 +329,7 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
           <span className="codicon codicon-chevron-down" aria-hidden="true" />
           {session.repo.repo}
         </div>
-        <Explorer paths={explorerPaths} selected={active} modified={modified} added={added} onOpen={open} onAction={onExplorerAction} />
+        <Explorer paths={explorerPaths} selected={active} modified={modified} added={added} onOpen={pick} onAction={onExplorerAction} />
       </aside>
       {view === "changes" && (
         <aside className="sidebar">
@@ -332,7 +396,7 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
                     key={path}
                     role="listitem"
                     className={`change-row${path === active ? " selected" : ""}${deleted.has(path) ? " deleted" : ""}`}
-                    onClick={() => !deleted.has(path) && open(path)}
+                    onClick={() => !deleted.has(path) && pick(path)}
                     title={deleted.has(path) ? `${path} (deleted)` : path}
                   >
                     <span className={`file-icon codicon codicon-${icon.icon} ${icon.className}`} aria-hidden="true" />

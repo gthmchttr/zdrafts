@@ -246,11 +246,25 @@ export function Explorer({
             <span className="name">{node.name}</span>
             {isModified && !node.folder && <span className="status">{added.has(node.path) ? "A" : "M"}</span>}
             {isModified && node.folder && <span className="status">●</span>}
+            {/* Touch screens have no right click: the same menu, from a button (shown on them only) */}
+            <button
+              className="row-more icon-btn"
+              aria-label={`More actions for ${node.name}`}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                const box = event.currentTarget.getBoundingClientRect();
+                setFocused(node.path);
+                setMenu(menu?.node.path === node.path ? null : { x: box.right, y: box.bottom, node });
+              }}
+            >
+              <span className="codicon codicon-ellipsis" aria-hidden="true" />
+            </button>
           </div>
         );
       })}
       {menu && (
-        <div className="menu tree-menu" role="menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="menu tree-menu" role="menu" style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 268)), top: Math.min(menu.y, innerHeight - 140) }} onMouseDown={(event) => event.stopPropagation()}>
           {(menu.node.folder ? menu.node.path === "content" || menu.node.path.startsWith("content/") : false) && (
             <>
               <button className="menu-item" role="menuitem" onClick={() => (setMenu(null), onAction({ type: "new", folder: menu.node.path, kind: "page" }))}>

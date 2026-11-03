@@ -188,6 +188,10 @@ button { font: inherit; color: inherit; }
 .activity button:hover { color: var(--fg); }
 .activity button { position: relative; }
 .activity-badge { position: absolute; right: 6px; bottom: 8px; font-size: 9px; line-height: 14px; min-width: 14px; padding: 0 4px; }
+.activity-label { display: none; }
+.narrow-only { display: none !important; }
+/* The explorer's row menu as a button, for touch screens (no right click) */
+.tree-row .row-more { display: none; margin-left: auto; color: var(--muted); }
 .workbench.sidebar-hidden { grid-template-columns: 48px 0 1fr auto; }
 .sidebar[hidden] { display: none; }
 .sidebar-title .spacer { flex: 1; }
@@ -451,11 +455,6 @@ button { font: inherit; color: inherit; }
   z-index: 60;
 }
 
-@media (max-width: 720px) {
-  .workbench { grid-template-columns: 48px var(--sidebar-width, 200px) 1fr; }
-  .workbench.sidebar-hidden { grid-template-columns: 48px 0 1fr; }
-  .panel { display: none; }
-}
 
 /* ---------- commit & token ---------- */
 .activity .activity-bottom { margin-top: auto; }
@@ -647,3 +646,85 @@ button { font: inherit; color: inherit; }
 .dialog-slash { padding-bottom: 16px; color: var(--faint); }
 .local-box { padding: 4px 12px 10px 20px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .local-box .btn { width: 100%; display: inline-flex; justify-content: center; align-items: center; gap: 6px; margin-top: 8px; }
+
+/* ---------- touch screens ---------- */
+@media (hover: none) {
+  .tab .close { visibility: visible; }
+  .change-row .actions { display: inline-flex; }
+  .tree-row .row-more { display: inline-flex; }
+}
+
+/* ---------- phones: the editor takes the screen; files, changes and page settings cover it ---------- */
+/* Keep the width in sync with NARROW in Workbench.tsx */
+@media (max-width: 720px) {
+  .workbench, .workbench.sidebar-hidden {
+    height: 100dvh;
+    grid-template-rows: 44px minmax(0, 1fr) calc(56px + env(safe-area-inset-bottom));
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "title" "editor" "activity";
+  }
+  .narrow-only { display: flex !important; }
+  .wide-only, .statusbar { display: none !important; }
+
+  .titlebar { padding: 0 6px 0 12px; }
+  .titlebar .brand { font-size: 0; }
+  .titlebar .brand .codicon { font-size: 18px; }
+  .titlebar .repo { text-align: left; }
+  .icon-btn { padding: 8px; }
+
+  /* The views, as a bar at the bottom */
+  .activity {
+    flex-direction: row;
+    align-items: stretch;
+    padding: 0 0 env(safe-area-inset-bottom);
+    border-right: 0;
+    border-top: 1px solid var(--border);
+  }
+  .activity button {
+    display: flex;
+    flex: 1;
+    width: auto;
+    height: 56px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    font-size: 20px;
+    border-left: 0;
+    border-top: 2px solid transparent;
+  }
+  .activity button.active { border-top-color: var(--focus); }
+  .activity button:disabled { opacity: .35; }
+  .activity .activity-bottom { margin-top: 0; }
+  .activity-label { display: block; font-size: 10.5px; letter-spacing: .02em; }
+  .activity-badge { right: calc(50% - 22px); top: 6px; bottom: auto; }
+
+  /* Explorer, changes and page settings: the whole screen, over the editor */
+  .sidebar, .panel { grid-area: editor; z-index: 10; width: auto; border: 0; }
+  .sidebar-title { height: 44px; font-size: 12px; padding: 0 6px 0 16px; }
+  .sidebar-title .icon-btn { font-size: 18px; }
+  .section-header { height: 32px; font-size: 12px; padding: 0 10px; }
+  .tree-row { height: 40px; font-size: 15px; }
+  .tree-row .file-icon, .tree-row .twistie { font-size: 18px; }
+  .change-row { height: 44px; font-size: 15px; padding-left: 16px; }
+  .change-row .actions .icon-btn { padding: 8px; font-size: 16px; }
+  .sidebar-note, .panel-note { font-size: 13px; }
+  .commit-box, .local-box { padding: 4px 16px 12px; }
+
+  /* Tabs and modes: bigger targets */
+  .tabs { height: 40px; }
+  .tab { max-width: 60vw; }
+  .tab .close { width: 32px; height: 32px; }
+  .breadcrumbs { height: 40px; padding: 0 8px 0 12px; }
+  .mode-switch button { padding: 6px 12px; font-size: 13px; }
+
+  /* 16px text in fields, or iOS zooms the page in when one is focused */
+  .commit-box textarea, .dialog-field input, .dialog-steps input, .intro-card > form input, .ns-field input, .ns-search input { font-size: 16px; }
+  .cm-host .cm-editor { font-size: 16px !important; }
+
+  .menu { min-width: min(260px, calc(100vw - 16px)); }
+  .menu-item { padding: 10px 12px; font-size: 15px; }
+  .log { max-height: 60%; }
+  .toast { left: 16px; right: 16px; bottom: calc(68px + env(safe-area-inset-bottom)); text-align: center; }
+  .dialog-buttons .btn { padding: 10px 16px; }
+}

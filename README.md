@@ -99,6 +99,10 @@ Early.
 
 Try it with [gthmchttr/gthmchttr.com](https://github.com/gthmchttr/gthmchttr.com).
 
+Each screen has its own address: `/<owner>/<repo>` (or `/<owner>/<repo>/tree/<branch>`) opens a
+repository, `/new` starts a new site and `/local/<id>` is a site made in this browser. On a phone
+the editor takes the whole screen, with Files, Changes and Page settings in a bar at the bottom.
+
 Known limitations:
 
 - Components that transform their body (zola-yolk's `render`: Mermaid, math) are edited as source
@@ -114,14 +118,15 @@ Known limitations:
 ```sh
 npm install
 npm run setup      # downloads zola.wasm + zola-wasi.js (v0.23.6) into public/zola/
-npm run dev        # http://localhost:5173/?repo=gthmchttr/gthmchttr.com
+npm run dev        # http://localhost:5173/gthmchttr/gthmchttr.com
 npm run fixtures   # gthmchttr.com + zola-yolk at a pinned commit, for the tests
 npm test           # Markdown round trip and source preservation on that content
 npm run build      # static site in dist/
 ```
 
-`dist/` is a static site, but it must be served from the root of its origin: the service worker
-serves the built site at `/site/` and injects the editor (`/frame.js`) into its pages.
+`dist/` is a static site, but it must be served from the root of its origin, with `404.html` for
+unknown paths (GitHub Pages does this): the service worker serves the built site at `/site/` and
+injects the editor (`/frame.js`) into its pages.
 
 ## How it works
 
