@@ -32,9 +32,23 @@ self.addEventListener("fetch", (event) => {
   // The site's home without its slash (base_url has none): "/view" → "/view/"
   if (`${url.pathname}/` in CACHES) return event.respondWith(Response.redirect(`${url.pathname}/${url.search}${url.hash}`, 302));
   const prefix = Object.keys(CACHES).find((prefix) => url.pathname.startsWith(prefix));
-  if (!prefix) return;
-  event.respondWith(serve(url, prefix));
+  if (prefix) return event.respondWith(serve(url, prefix));
+  // A root-relative URL in a site's page ("/images/a.png", as the site has it on its own domain):
+  // from that page's build, else from the network (the editor's own files)
+  if (event.clientId && event.request.mode !== "navigate") event.respondWith(fromPage(event, url));
 });
+
+async function fromPage(event, url) {
+  const client = await self.clients.get(event.clientId);
+  const page = client && new URL(client.url).pathname;
+  const prefix = page && Object.keys(CACHES).find((prefix) => page.startsWith(prefix));
+  if (prefix) {
+    const cache = await caches.open(CACHES[prefix]);
+    const found = (await cache.match(`${prefix.slice(0, -1)}${decodeURI(url.pathname)}`)) ?? (await lazyFile(decodeURI(url.pathname).slice(1)));
+    if (found) return found;
+  }
+  return fetch(event.request);
+}
 
 async function serve(url, prefix) {
   const cache = await caches.open(CACHES[prefix]);

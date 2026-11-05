@@ -7,10 +7,12 @@
 //          → the HTML with that text where the editable text goes
 //   atom   {{ <img src="…" /> }}   → just the HTML
 //   code   a fenced code block (name: its language, args: its code) → Zola's highlighted <pre>
+//   source any of the page's source (args), as it's written → the HTML Zola renders for it: a
+//          component whose body the theme transforms (name "block"), Tera in a sentence ("inline")
 import { inlineTag, openTag } from "../markdown/remark-zola.ts";
 import { setStringAttr } from "../markdown/tera.ts";
 
-export type ProbeKind = "block" | "text" | "atom" | "code";
+export type ProbeKind = "block" | "text" | "atom" | "code" | "source";
 
 export interface ProbeCall {
   kind: ProbeKind;
@@ -40,10 +42,18 @@ export function probePage(calls: ProbeCall[], frontMatter = '+++\ntitle = "zdraf
       // A fence longer than any run of backticks in the code
       const longest = Math.max(2, ...[...call.args.matchAll(/`+/g)].map((m) => m[0].length));
       const fence = "`".repeat(longest + 1);
-      return `<div data-zdrafts-probe="${n}">\n\n${fence}${call.name}\n${call.args}\n${fence}\n\n</div>`;
+      // Zola renders a page's Tera before its Markdown, code included: in raw, code that looks like
+      // Tera ({% <note> %} in an example) is highlighted as it's written, as pages write it
+      const code = `${fence}${call.name}\n${call.args}\n${fence}`;
+      const raw = call.args.includes("endraw") ? code : `{% raw %}\n${code}\n{% endraw %}`;
+      return `<div data-zdrafts-probe="${n}">\n\n${raw}\n\n</div>`;
     }
     if (call.kind === "block") {
       return `<div data-zdrafts-probe="${n}">\n\n${openTag(call.name, call.args)}<!--${SLOT_COMMENT}-->{% </${call.name}> %}\n\n</div>`;
+    }
+    if (call.kind === "source") {
+      // Inline: in the HTML block, so Markdown doesn't make a paragraph of it
+      return call.name === "inline" ? `<div data-zdrafts-probe="${n}">${call.args}</div>` : `<div data-zdrafts-probe="${n}">\n\n${call.args}\n\n</div>`;
     }
     const args = call.kind === "text" ? setStringAttr(call.args, "text", textSlot(n)) : call.args;
     return `<div data-zdrafts-probe="${n}">${inlineTag(call.name, args)}</div>`;

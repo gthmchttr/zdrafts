@@ -34,6 +34,11 @@ jobs:
         run: |
           npm run fixtures
           npm test
+      # Every page of each catalog theme's demo site renders in Visual as Zola builds it
+      - name: End-to-end tests
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e
       # The site's pages run on a sandbox origin of their own (src/origins.ts), set with the
       # repository variables APP_ORIGIN and SANDBOX_ORIGIN; without them, on the app's origin
       - name: Build

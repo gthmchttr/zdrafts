@@ -4,6 +4,8 @@ import { joinFrontMatter, splitFrontMatter } from "../markdown/frontmatter.ts";
 import { commitFiles } from "../repo/commit.ts";
 import { downloadFiles, GitHubError, loadRepo, rawUrl, rememberCommit, rememberNeeded, type LoadedRepo, type Progress, type RepoRef } from "../repo/github.ts";
 import { missingFiles, servedFiles } from "../repo/lazy.ts";
+import { markdownSettings, type RenderInfo } from "../markdown/zola-render.ts";
+import { parse as parseToml } from "smol-toml";
 import { inspectSite, SiteError, type SiteInfo } from "../repo/site.ts";
 import { getLocalSite, localRepo } from "../site/local.ts";
 import { findTheme, type ThemeAdapter } from "../themes/index.ts";
@@ -197,6 +199,30 @@ export class Session {
     const entry = this.repo.notDownloaded.get(path);
     if (entry) return (await downloadFiles([entry])).get(path);
     return this.zola.read(path);
+  }
+
+  /** How Zola renders `path`'s links and headings: its URL, every page's, the site's settings */
+  renderInfo(path: string): Omit<RenderInfo, "headings"> {
+    const url = (output: string) => `${this.baseUrl}/${output.replace(/index\.html$/, "")}`;
+    const output = this.pages.get(path);
+    let config: Record<string, unknown> = {};
+    try {
+      config = parseToml(this.text(this.site.configPath)) as Record<string, unknown>;
+    } catch {
+      // A config being edited may not parse: Zola's defaults
+    }
+    return {
+      pageUrl: output ? url(output) : `${this.baseUrl}/`,
+      pages: Object.fromEntries([...this.pages].map(([content, out]) => [content.slice("content/".length), url(out)])),
+      markdown: markdownSettings(config),
+    };
+  }
+
+  /** A page's language, as Zola gives it: "post.fr.md" is French if the site has French, else the default */
+  language(path: string): string {
+    const config = this.site.config as { default_language?: string; languages?: Record<string, unknown> };
+    const suffix = /\.([a-z]{2,3}(?:-\w+)?)\.md$/i.exec(path)?.[1];
+    return suffix && config.languages && suffix in config.languages ? suffix : (config.default_language ?? "en");
   }
 
   /** Tell the sandbox where the files not downloaded are, unless a draft replaces or deletes them */
@@ -394,7 +420,7 @@ export class Session {
   private async doRebuild(): Promise<void> {
     this.status = { state: "building" };
     this.emit();
-    const overrides: Map<string, Uint8Array | null> = chromeOverrides(this.contentPages, (path) => this.text(path));
+    const overrides: Map<string, Uint8Array | null> = chromeOverrides(this.contentPages, (path) => this.text(path), (path) => this.language(path));
     // Edited config, added images…: everything else that has a draft
     for (const path of this.drafts.paths()) if (!overrides.has(path)) overrides.set(path, this.bytes(path) ?? null);
     const config = previewConfig(this.text(this.site.configPath));

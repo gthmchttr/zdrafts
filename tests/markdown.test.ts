@@ -199,3 +199,33 @@ describe("html", () => {
     same(body);
   });
 });
+
+test("component bodies are parsed with their text, which plugins may read", () => {
+  // Like Milkdown's remarkMarker, which looks up how emphasis was written in the file's text
+  const markers: string[] = [];
+  const readsText = () => (tree: Root, file: { value: unknown }) => {
+    const walk = (node: Nodes) => {
+      if (node.type === "strong") markers.push(String(file.value).charAt(node.position!.start.offset!));
+      if ("children" in node) node.children.forEach((child) => walk(child as Nodes));
+    };
+    walk(tree);
+  };
+  // Before remarkZola, as in the editor (Milkdown's preset comes first): component bodies are only
+  // seen by the run on their own text
+  const withMarker = unified().use(remarkParse).use(remarkGfm).use(readsText).use(remarkZola);
+  withMarker.runSync(withMarker.parse(encodeTera("{% <note> %}\n__bold__ and **bold**\n{% </note> %}")), "");
+  expect(markers).toEqual(["_", "*"]);
+});
+
+test("what's in {% raw %} is Markdown, not components; its tags are their own", () => {
+  const tree = parse("Use {% raw %}`{{ <icon /> }}`{% endraw %} like this.\n\n{% raw %}\n```md\n{% <note> %}x{% </note> %}\n```\n{% endraw %}\n");
+  expect(collect(tree, COMPONENT_TYPES)).toEqual(["zolaTera:{% raw %}", "zolaTera:{% endraw %}", "zolaTeraBlock:{% raw %}", "zolaTeraBlock:{% endraw %}"]);
+  const code: string[] = [];
+  const walk = (node: Nodes | Root) => {
+    if (node.type === "code" || node.type === "inlineCode") code.push(node.value);
+    if ("children" in node) node.children.forEach((child) => walk(child as Nodes));
+  };
+  walk(tree);
+  expect(code).toEqual(["{{ <icon /> }}", "{% <note> %}x{% </note> %}"]);
+  expect(stringify(tree)).toBe("Use {% raw %}`{{ <icon /> }}`{% endraw %} like this.\n\n{% raw %}\n\n```md\n{% <note> %}x{% </note> %}\n```\n\n{% endraw %}\n");
+});

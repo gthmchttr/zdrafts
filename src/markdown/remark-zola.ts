@@ -40,8 +40,10 @@ export function remarkZola(this: Processor) {
 }
 
 function parseBody(body: string, processor: Processor): Nodes[] {
-  // runSync applies this plugin again, so nested components are handled too
-  const root = processor.runSync(processor.parse(encodeTera(body))) as Root;
+  // runSync applies this plugin again, so nested components are handled too. With the body's text:
+  // plugins read it (Milkdown's remarkMarker looks up how emphasis was written)
+  const encoded = encodeTera(body);
+  const root = processor.runSync(processor.parse(encoded), encoded) as Root;
   return root.children as Nodes[];
 }
 
@@ -53,6 +55,8 @@ function blockNode(token: Token, processor: Processor): Nodes | null {
       args: token.args,
       open: token.open,
       close: token.close,
+      // As written, for rendering it as written (src/frame/nodes.ts)
+      source: `${token.open}${token.body}${token.close}`,
       children: parseBody(token.body, processor),
     } as unknown as Nodes;
   }

@@ -15,8 +15,20 @@
 .zd-component { white-space: normal; }
 .zd-slot, .zd-text { outline: none; white-space: pre-wrap; }
 .zd-text:empty::before { content: "\200b"; }
-.zd-atom { cursor: pointer; }
+/* An atom's wrapper takes no part in layout; its selection outline goes on what it shows */
+.zd-atom { cursor: pointer; display: contents; }
+.zd-atom.ProseMirror-selectednode > *, .zd-atom.zd-selected > * { outline: 2px solid #3b82f6; }
 .zd-atom img { pointer-events: none; }
+
+/* A footnote edited where it's written, while Zola shows it at the end of the page */
+.zd-footnote { opacity: .6; border-left: 2px solid rgba(127, 127, 127, .5); padding-left: .75em; margin: 1em 0; }
+.zd-footnote::before { content: attr(data-label); font: .8em ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* A task item's checkbox ticks the item: the click goes to its wrapper (src/frame/blocks.ts) */
+.zd-task input { pointer-events: none; }
+.zd-task { cursor: pointer; }
+
+/* What only helps editing: a heading's {#id}, Tera that renders nothing */
+.zd-editing { opacity: .55; }
 
 /* Components that can't be edited in place */
 .zd-fallback {
@@ -56,3 +68,14 @@ pre.zd-tera-block { padding: .5em .75em; white-space: pre-wrap; }
 .zd-root .zd-summary { cursor: default; user-select: none; }
 .zd-raw-html { display: inline-block; outline: 1px dashed rgba(127, 127, 127, .45); outline-offset: 2px; }
 .zd-raw-block { display: block; }
+
+/* Code blocks: Zola's highlighted <pre> as built, in the page's flow (its margins collapse as
+   without the wrapper), and the editable code over it, transparent so the highlighted text shows
+   through (src/frame/codeblock.ts) */
+.zd-code { position: relative; }
+.zd-code:not(.zd-code-stale) > pre.zd-code-edit { position: absolute; inset: 0; margin: 0; z-index: 1; overflow: auto; }
+.zd-code:not(.zd-code-stale) > pre.zd-code-edit,
+.zd-code:not(.zd-code-stale) > pre.zd-code-edit * { color: transparent !important; background: transparent !important; border-color: transparent !important; box-shadow: none !important; }
+.zd-code > pre:not(.zd-code-edit) { pointer-events: none; }
+/* Not highlighted for the code as it is now (or not yet): the editable code takes Zola's place */
+.zd-code.zd-code-stale > pre:not(.zd-code-edit) { display: none; }

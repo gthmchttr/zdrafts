@@ -1,4 +1,5 @@
 // Messages between the shell (zdrafts' UI) and the editor running inside the site's page
+import type { RenderInfo } from "../markdown/zola-render.ts";
 import type { ComponentInfo } from "../zola/components.ts";
 import type { ProbeCall, ProbeResult } from "../zola/probe.ts";
 
@@ -26,6 +27,8 @@ export type ShellToFrame =
       /** Image files under static/, for the image picker */
       staticImages: string[];
       siteUrl: string;
+      /** How Zola renders the page's links and headings (the frame adds the headings' ids it finds) */
+      render: Omit<RenderInfo, "headings">;
     }
   | { type: "probe-result"; id: number; results: [string, ProbeResult][] }
   /** The added file's URL on the site ("/images/a.png") */

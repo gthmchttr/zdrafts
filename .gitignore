@@ -4,3 +4,7 @@ dist/
 public/zola/
 .DS_Store
 tests/fixtures/
+# Playwright (npm run test:e2e)
+test-results/
+playwright-report/
+.playwright-mcp/

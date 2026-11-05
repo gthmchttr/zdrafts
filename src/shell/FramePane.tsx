@@ -43,6 +43,7 @@ export function FramePane({
             theme: { editCss: theme.editCss, hiddenComponents: theme.hiddenComponents, componentHints: theme.componentHints },
             staticImages: session.staticImages(),
             siteUrl: session.baseUrl,
+            render: session.renderInfo(path),
           });
           break;
         }

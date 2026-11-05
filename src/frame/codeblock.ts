@@ -1,13 +1,12 @@
 // Code blocks drawn as the site publishes them: Zola highlights each block (a "code" probe, see
-// src/zola/probe.ts) and its colours are laid over the editable code as decorations. While the
-// code changes, the last colours move along with the text until Zola has highlighted the new code.
+// src/zola/probe.ts), and its <pre> is shown as it is, with the editable code over it (CodeBlockView).
 import { codeBlockSchema } from "@milkdown/kit/preset/commonmark";
 import type { Node as ProseNode } from "@milkdown/kit/prose/model";
-import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
+import { Plugin } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView, type NodeView } from "@milkdown/kit/prose/view";
 import { $prose, $view } from "@milkdown/kit/utils";
 import type { ProbeCall, ProbeResult } from "../zola/probe.ts";
-import { probeRefreshKey, type EditorEnv } from "./nodes.ts";
+import type { EditorEnv } from "./nodes.ts";
 
 /** The fence's info string: the language and, after it, Zola's options (linenos, hl_lines=…) */
 const infoString = (node: ProseNode) => [node.attrs.language, node.attrs.meta].filter(Boolean).join(" ");
@@ -40,77 +39,93 @@ export const codeBlockWithMeta = codeBlockSchema.extendSchema((schema) => (ctx) 
   };
 });
 
-interface Highlight {
-  /** <pre> and <code> attributes (Zola's class and colours) */
-  pre: [string, string][];
-  code: [string, string][];
-  /** Coloured ranges, as offsets into the code */
-  spans: { from: number; to: number; style: string }[];
-}
-
-const parsed = new WeakMap<ProbeResult, Highlight | null>();
-
-/** Read Zola's highlighted HTML for a code block whose text is `text` */
-function highlight(result: ProbeResult, text: string): Highlight | null {
-  if (parsed.has(result)) return parsed.get(result)!;
-  let value: Highlight | null = null;
-  const doc = new DOMParser().parseFromString(result.html, "text/html");
-  const pre = doc.querySelector("pre");
+/** Zola's highlighted HTML for a block, if it's for this code: its <pre> */
+function highlighted(doc: Document, result: ProbeResult | undefined, text: string): HTMLElement | null {
+  if (!result?.html) return null;
+  const template = doc.createElement("template");
+  template.innerHTML = result.html;
+  const pre = template.content.querySelector("pre");
   const code = pre?.querySelector("code") ?? pre;
-  if (pre && code) {
-    const spans: Highlight["spans"] = [];
-    let offset = 0;
-    const walker = doc.createTreeWalker(code, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const length = node.textContent!.length;
-      const styled = node.parentElement?.closest("[style]");
-      if (styled && styled !== pre && code.contains(styled) && length) spans.push({ from: offset, to: offset + length, style: styled.getAttribute("style")! });
-      offset += length;
-    }
-    // Zola may end the code with a newline the editor doesn't keep
-    if (code.textContent!.replace(/\n$/, "") === text.replace(/\n$/, "")) {
-      const attrs = (element: Element) => [...element.attributes].map((a): [string, string] => [a.name, a.value]);
-      value = { pre: attrs(pre), code: code === pre ? [] : attrs(code), spans };
-    }
-  }
-  parsed.set(result, value);
-  return value;
+  if (!pre || !code) return null;
+  // Line numbers aren't the code; Zola may end the code with a newline the editor doesn't keep
+  const copy = code.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll(".giallo-ln, .z-ln, [class*='lineno']").forEach((number) => number.remove());
+  return copy.textContent!.replace(/\n$/, "") === text.replace(/\n$/, "") ? (pre as HTMLElement) : null;
 }
 
 /** Zola's <pre> look from the last highlighted block, for blocks not highlighted yet */
-let lastLook: Pick<Highlight, "pre" | "code"> | null = null;
+let lastPre: HTMLElement | null = null;
 
+/**
+ * A code block as Zola renders it: Zola's highlighted <pre> as it is, with the editable code laid
+ * over it in the same place, its text transparent (the highlighted text shows through). While the
+ * code changes, the editable text shows until Zola has highlighted the new code.
+ */
 class CodeBlockView implements NodeView {
   dom: HTMLElement;
   contentDOM: HTMLElement;
-  private look = "";
+  private edit: HTMLElement;
+  private shown: HTMLElement | null = null;
+  private showing: ProbeResult | undefined;
 
   constructor(
     private node: ProseNode,
     private env: EditorEnv,
   ) {
-    this.dom = env.doc.createElement("pre");
-    this.contentDOM = env.doc.createElement("code");
-    this.dom.append(this.contentDOM);
+    const { doc } = env;
+    this.dom = doc.createElement("div");
+    this.dom.className = "zd-code zd-unwrap";
+    this.edit = doc.createElement("pre");
+    this.contentDOM = doc.createElement("code");
+    this.contentDOM.spellcheck = false;
+    this.edit.append(this.contentDOM);
+    this.dom.append(this.edit);
+    this.edit.addEventListener("scroll", () => {
+      if (this.shown) this.shown.scrollLeft = this.edit.scrollLeft;
+    });
     this.render();
   }
 
   private render() {
     const result = this.env.probes.peek(codeCall(this.node));
-    const found = result?.html ? highlight(result, this.node.textContent) : null;
-    if (found) lastLook = found;
-    const look = found ?? lastLook;
-    const key = JSON.stringify([look, this.node.attrs.language]);
-    if (key === this.look) return;
-    this.look = key;
-    for (const { name } of [...this.dom.attributes]) this.dom.removeAttribute(name);
-    for (const { name } of [...this.contentDOM.attributes]) this.contentDOM.removeAttribute(name);
-    for (const [name, value] of look?.pre ?? []) this.dom.setAttribute(name, value);
-    for (const [name, value] of look?.code ?? []) this.contentDOM.setAttribute(name, value);
-    this.dom.classList.add("zd-code");
-    this.contentDOM.spellcheck = false;
-    this.dom.dataset.language = this.node.attrs.language || "";
+    const pre = highlighted(this.env.doc, result, this.node.textContent);
+    if (pre) lastPre = pre;
+    if (pre && result !== this.showing) {
+      this.showing = result;
+      this.shown?.remove();
+      this.shown = this.env.doc.importNode(pre, true) as HTMLElement;
+      this.shown.contentEditable = "false";
+      // The editable layer is what's read out
+      this.shown.setAttribute("aria-hidden", "true");
+      this.shown.dataset.zdAdded = "aria-hidden";
+      this.dom.prepend(this.shown);
+    }
+    // The editable layer looks like Zola's <pre> (the theme's padding, font, line height)
+    const look = pre ?? this.shown ?? lastPre;
+    for (const { name } of [...this.edit.attributes]) this.edit.removeAttribute(name);
+    for (const [name, value] of look ? [...look.attributes].map((a) => [a.name, a.value]) : []) if (name !== "id" && name !== "aria-hidden" && name !== "contenteditable") this.edit.setAttribute(name, value);
+    this.edit.classList.add("zd-editing", "zd-code-edit");
+    this.dom.classList.toggle("zd-code-stale", !pre);
     if (this.node.attrs.language) this.contentDOM.dataset.lang = this.node.attrs.language;
+    else delete this.contentDOM.dataset.lang;
+    requestAnimationFrame(() => this.align());
+  }
+
+  /** Line numbers and such before the code in Zola's <pre>: the editable text starts as far in */
+  private align() {
+    this.edit.style.paddingLeft = "";
+    const first = this.shown && [...this.shown.querySelectorAll("code *, code")].flatMap((element) => [...element.childNodes]).find((node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim() && !(node.parentElement?.closest(".giallo-ln, .z-ln")));
+    const editText = this.contentDOM.firstChild;
+    if (!first || !editText || this.dom.classList.contains("zd-code-stale")) return;
+    const at = (node: Node) => {
+      const range = this.env.doc.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, Math.min(1, node.textContent!.length));
+      return range.getBoundingClientRect().left;
+    };
+    const shift = at(first) - at(editText);
+    if (Math.abs(shift) > 0.5) this.edit.style.paddingLeft = `${parseFloat(getComputedStyle(this.edit).paddingLeft) + shift}px`;
+    this.edit.style.caretColor = getComputedStyle(first.parentElement!).color;
   }
 
   update(node: ProseNode) {
@@ -120,44 +135,29 @@ class CodeBlockView implements NodeView {
     return true;
   }
 
-  // Decorations change on every highlight; the content is ProseMirror's
+  // Zola's layer and the attributes are drawn here; the content is ProseMirror's
   ignoreMutation(mutation: MutationRecord | { type: "selection"; target: Node }) {
-    return mutation.type === "attributes" && mutation.target === this.dom;
+    if (mutation.type === "selection") return false;
+    return !this.contentDOM.contains(mutation.target) || (mutation.type === "attributes" && mutation.target === this.contentDOM);
   }
 }
 
-const key = new PluginKey<DecorationSet>("zdrafts-code-highlight");
-
 export function codeBlocks(env: EditorEnv) {
-  const decorate = (doc: ProseNode, previous: DecorationSet): DecorationSet => {
-    let set = previous;
-    doc.descendants((node, pos) => {
-      if (node.type.name !== "code_block") return true;
-      const result = env.probes.peek(codeCall(node));
-      const found = result?.html ? highlight(result, node.textContent) : null;
-      if (found) {
-        const start = pos + 1;
-        set = set.remove(set.find(start, pos + node.nodeSize - 1));
-        set = set.add(doc, found.spans.map((span) => Decoration.inline(start + span.from, start + span.to, { style: span.style })));
-      }
-      return false;
-    });
-    return set;
-  };
-
   const plugin = $prose(
     () =>
-      new Plugin<DecorationSet>({
-        key,
-        state: {
-          init: (_, state) => decorate(state.doc, DecorationSet.empty),
-          apply(tr, set) {
-            const mapped = set.map(tr.mapping, tr.doc);
-            return tr.docChanged || tr.getMeta(probeRefreshKey) !== undefined ? decorate(tr.doc, mapped) : mapped;
+      new Plugin({
+        // A new highlight redraws the blocks: each carries the probes' version
+        props: {
+          decorations: (state) => {
+            const found: Decoration[] = [];
+            state.doc.descendants((node, pos) => {
+              if (node.type.name === "code_block") found.push(Decoration.node(pos, pos + node.nodeSize, { "data-zd-probes": String(env.probes.version) }));
+              return node.type.name !== "code_block";
+            });
+            return DecorationSet.create(state.doc, found);
           },
         },
-        props: { decorations: (state) => key.getState(state) },
-        // Ask Zola to highlight code blocks once typing pauses
+        // Ask Zola to highlight code blocks, and again once typing pauses
         view(view) {
           let timer: ReturnType<typeof setTimeout> | undefined;
           const request = (v: EditorView) =>

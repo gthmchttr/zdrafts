@@ -12,7 +12,7 @@ const hostOf = (repo: string) => {
 function Shot({ theme, lazy }: { theme: CatalogTheme; lazy?: boolean }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [theme.screenshot]);
-  if (failed) return <span className="ns-noshot" aria-hidden="true">{theme.name}</span>;
+  if (failed || !theme.screenshot) return <span className="ns-noshot" aria-hidden="true">{theme.name}</span>;
   return <img src={theme.screenshot} alt="" loading={lazy ? "lazy" : undefined} onError={() => setFailed(true)} />;
 }
 

@@ -82,11 +82,18 @@ theme renders. What it does to make that general:
 needs an adapter. `tests/theme-survey.test.ts` builds a new site with each theme in a folder of
 theme repositories and checks the build, the editable pages and the components.
 
+Visual mode renders a page the way Zola does, so that it looks as built: links and images with
+Zola's URLs and attributes, headings with Zola's ids, tight lists and table cells without `<p>`,
+task lists, definition lists and footnotes (when the site turns them on), code highlighted by Zola,
+components alone on a line without a paragraph around them, and components whose body the theme
+transforms (diagrams, math) as Zola renders them. What's only there to edit (a heading's `{#id}`, a
+footnote where it's written, `{% raw %}` tags) is shown faintly and isn't part of the page.
+
 ## New sites
 
-**Start a new site with a theme** on the start screen picks one of the Zola theme gallery's themes
-(`src/themes/catalog.ts`: the ones that build and edit in zdrafts, at the commit they were tested
-at; themes on servers that don't let browsers download from them aren't listed). The new site has
+**Start a new site with a theme** on the start screen picks one of the themes in
+`src/themes/catalog.ts` (for now zola-yolk), at the commit they were tested at: every page of each
+theme's demo site renders in Visual exactly as Zola builds it (`tests/e2e/visual-view.spec.ts`). The new site has
 the theme under `themes/`, the theme's demo config and content (pages that can't build in a
 browser, e.g. ones that load data from the web, are left out), and a GitHub Pages workflow. It's
 kept in this browser until **Publish to GitHub** (in Changes) creates a repository with it, the
@@ -99,7 +106,7 @@ Early.
 | | Supported |
 | --- | --- |
 | Zola | 0.23.6 (from `ZOLA_VERSION` in the site's CI workflow, `netlify.toml` or `vercel.json`) |
-| Themes | Any; 30 of the gallery's themes tested (see above) |
+| Themes | Any; new sites from zola-yolk, every page of whose demo renders in Visual as built |
 
 Try it with [gthmchttr/gthmchttr.com](https://github.com/gthmchttr/gthmchttr.com).
 
@@ -127,10 +134,17 @@ Known limitations:
 npm install
 npm run setup      # downloads zola.wasm + zola-wasi.js (v0.23.6) into public/zola/
 npm run dev        # http://localhost:5173/gthmchttr/gthmchttr.com
-npm run fixtures   # gthmchttr.com + zola-yolk at a pinned commit, for the tests
+npm run fixtures   # gthmchttr.com and the catalog's themes at pinned commits, for the tests
 npm test           # Markdown round trip and source preservation on that content
+npm run test:e2e   # in a browser: each catalog theme's pages in Visual against View (Playwright)
 npm run build      # static site in dist/
 ```
+
+`npm run test:e2e` makes a new site from each catalog theme as people do (GitHub answered from the
+fixtures), and compares every page in Visual with the same page as Zola builds it: the theme's
+markup around the content, and the content itself, apart from what only makes it editable
+(`tests/e2e/compare.ts`). It also checks every page can be edited. It runs in Chromium;
+`E2E_BROWSERS=chromium,firefox,webkit` for all three, `E2E_CAPTURE=<dir>` keeps what it compared.
 
 In development the app is on `localhost` and the sandbox on `127.0.0.1`, both from the same server.
 

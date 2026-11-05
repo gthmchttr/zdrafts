@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "fixtures": "node scripts/fetch-fixtures.mjs"
+    "fixtures": "node scripts/fetch-fixtures.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",
@@ -26,14 +27,17 @@
     "@vscode/codicons": "0.0.45",
     "fflate": "0.8.3",
     "idb-keyval": "6.3.0",
+    "mdast-util-definitions": "6.0.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "remark-gfm": "4.0.1",
     "remark-parse": "11.0.0",
     "smol-toml": "1.9.0",
-    "unified": "11.0.5"
+    "unified": "11.0.5",
+    "unist-util-visit": "5.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@types/jsdom": "30.0.0",
     "@types/mdast": "4.0.4",
     "@types/node": "26.6.4",

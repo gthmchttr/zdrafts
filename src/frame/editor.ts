@@ -4,7 +4,7 @@ import { block, blockConfig, blockServiceInstance, defaultNodeFilter } from "@mi
 import { clipboard } from "@milkdown/kit/plugin/clipboard";
 import { history } from "@milkdown/kit/plugin/history";
 import { listener, listenerCtx } from "@milkdown/kit/plugin/listener";
-import { commonmark, imageSchema } from "@milkdown/kit/preset/commonmark";
+import { commonmark, imageSchema, syncHeadingIdPlugin } from "@milkdown/kit/preset/commonmark";
 import { gfm, insertTableCommand, remarkGFMPlugin } from "@milkdown/kit/preset/gfm";
 import { dropCursor } from "@milkdown/kit/prose/dropcursor";
 import { $prose, callCommand } from "@milkdown/kit/utils";
@@ -20,6 +20,13 @@ import { menus } from "./menus.ts";
 import { COMPONENT_ATTR, inlineTextKeys, probeRefresh, probeRefreshKey, remarkZolaPlugin, zolaNodes, zolaViews, type EditorEnv } from "./nodes.ts";
 import { Overlay } from "./overlay.ts";
 import { Probes } from "./probes.ts";
+import { headingIds, zolaHeadings, zolaImages, zolaLinks } from "./rendering.ts";
+import { standaloneComponents, zolaListItems, zolaParagraphs, zolaTables } from "./blocks.ts";
+import { definitionLists, remarkDefinitionListPlugin } from "./deflist.ts";
+import { zolaFootnotes } from "./footnotes.ts";
+import { linkDefinitionSchema, remarkLinkDefinitionsPlugin, replacedPlugin } from "./linkdefs.ts";
+import { definitionListHandlers } from "../markdown/deflist.ts";
+import type { RenderInfo } from "../markdown/zola-render.ts";
 import type { FrameToShell, ShellToFrame } from "./protocol.ts";
 import { openComponentSettings, openImageForm, openLinkForm, type SettingsEnv } from "./settings.ts";
 import { slashItems, slashPlugin, type SlashItem } from "./slash.ts";
@@ -41,7 +48,11 @@ const image = imageSchema.extendSchema((schema) => (ctx) => {
   };
 });
 
-export async function createEditor(root: HTMLElement, message: DocMessage, post: (message: FrameToShell) => void, probes: Probes, assets: Assets) {
+/**
+ * `headings`: the ids Zola gave the page's headings in the page as served (src/frame/main.ts)
+ */
+export async function createEditor(root: HTMLElement, message: DocMessage, headings: RenderInfo["headings"], post: (message: FrameToShell) => void, probes: Probes, assets: Assets) {
+  const render: RenderInfo = { ...message.render, headings };
   const doc = root.ownerDocument;
   const components = new Map<string, ComponentInfo>(message.components.map((c) => [c.name, c]));
   const overlay = new Overlay(doc);
@@ -88,7 +99,7 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
       ctx.set(defaultValueCtx, encodeTera(message.body));
       ctx.update(remarkStringifyOptionsCtx, (options) => ({
         ...options,
-        handlers: { ...options.handlers, ...zolaHandlers, ...htmlHandlers },
+        handlers: { ...options.handlers, ...zolaHandlers, ...htmlHandlers, ...definitionListHandlers },
         join: [...(options.join ?? []), htmlJoin],
         // Closest to how Zola sites are usually written
         bullet: "-" as const,
@@ -100,10 +111,22 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
         if (dirty && baseline !== null) post({ type: "doc-change", path: message.path, body: preserveSource(message.body, baseline, markdown) });
       });
     })
-    .use(commonmark)
-    .use(image)
+    // Headings' ids follow Zola's rules (headingIds), not Milkdown's
+    // Link definitions are kept (remarkLinkDefinitionsPlugin), not deleted
+    .use(commonmark.filter((plugin) => plugin !== syncHeadingIdPlugin && !(replacedPlugin as unknown[]).includes(plugin)))
+    .use([remarkLinkDefinitionsPlugin, linkDefinitionSchema].flat())
+    .use(zolaImages(image, render))
+    .use(zolaLinks(render))
+    .use(zolaHeadings())
+    .use(headingIds(render))
     .use(codeBlockWithMeta)
     .use(gfm)
+    .use(zolaTables)
+    .use([zolaParagraphs, zolaListItems, standaloneComponents(env)])
+    .use(definitionLists)
+    .use(zolaFootnotes(render))
+    // Only where the site has them, as Zola renders them only then
+    .use(render.markdown.definitionList ? remarkDefinitionListPlugin : [])
     .config((ctx) => ctx.set(remarkGFMPlugin.options.key, { tablePipeAlign: false }))
     .use(history)
     .use(listener)
@@ -160,6 +183,21 @@ export async function createEditor(root: HTMLElement, message: DocMessage, post:
       root.before(note);
     }
     probes.onChange(() => view.dispatch(view.state.tr.setMeta(probeRefreshKey, probes.version)));
+    // Components whose body the theme transforms are rendered with their body, as Markdown
+    const serialize = ctx.get(serializerCtx);
+    const asMarkdown = (node: import("@milkdown/kit/prose/model").Node) => serialize(view.state.schema.topNodeType.create(null, [node]));
+    // A component as written while it isn't edited (it serializes as when the page opened): Zola
+    // sees the source as written, and a template may hash it
+    const unedited = new Map<string, string>();
+    view.state.doc.descendants((node) => {
+      if (node.type.name === "zola_block" && node.attrs.source) unedited.set(node.attrs.source, asMarkdown(node));
+      return true;
+    });
+    env.markdown = (node) => {
+      const markdown = asMarkdown(node);
+      return node.attrs.source && unedited.get(node.attrs.source) === markdown ? node.attrs.source : markdown;
+    };
+    view.dispatch(view.state.tr.setMeta(probeRefreshKey, -1).setMeta("addToHistory", false));
     const service = ctx.get(blockServiceInstance.key);
     service.bind(ctx, (event) => (event.type === "show" ? overlay.showGrip(event.active.el) : overlay.hideGrip()));
     service.addEvent(overlay.grip);

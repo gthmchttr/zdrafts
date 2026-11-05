@@ -6,6 +6,7 @@ import { Assets } from "./assets.ts";
 import { createEditor } from "./editor.ts";
 import { Probes } from "./probes.ts";
 import { APP_ORIGIN } from "../origins.ts";
+import { endData, startData } from "../zola/markers.ts";
 import type { FrameToShell, ShellToFrame } from "./protocol.ts";
 import editorCss from "./frame.css?inline";
 
@@ -23,13 +24,13 @@ function addStyle(css: string) {
  * Swap the stand-in content Zola rendered (see src/zola/chrome.ts) for the editor's root: the
  * start marker, the headings after it and the end marker.
  */
-function mountPoint(): HTMLElement | null {
+function mountPoint(): { root: HTMLElement; headings: { text: string; id: string }[] } | null {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if ((node as Comment).data !== `zdrafts:content:${path}`) continue;
+    if ((node as Comment).data !== startData(path)) continue;
     const root = document.createElement("div");
     root.className = "zd-root";
-    const end = `zdrafts:end:${path}`;
+    const end = endData(path);
     // The end marker is a sibling, unless the theme moved content around; then only the marker goes
     let next = node.nextSibling;
     const between: ChildNode[] = [];
@@ -37,9 +38,11 @@ function mountPoint(): HTMLElement | null {
       between.push(next);
       next = next.nextSibling;
     }
+    // The headings Zola rendered in the stand-in content, with the ids it gave them
+    const headings = between.flatMap((child) => (child instanceof HTMLElement && /^H[1-6]$/.test(child.tagName) ? [{ text: child.textContent!.trim(), id: child.id }] : []));
     if (next) [...between, next].forEach((child) => child.remove());
     node.parentNode!.replaceChild(root, node);
-    return root;
+    return { root, headings };
   }
   return null;
 }
@@ -48,8 +51,9 @@ async function main() {
   addStyle(proseMirrorCss);
   addStyle(tablesCss);
   addStyle(editorCss);
-  const root = mountPoint();
-  if (!root) {
+  const mount = mountPoint();
+  const root = mount?.root;
+  if (!mount || !root) {
     document.body.insertAdjacentHTML("afterbegin", '<p style="font:14px system-ui;padding:1rem;background:#fee">zdrafts: this page\'s content area wasn\'t found.</p>');
     return;
   }
@@ -78,7 +82,7 @@ async function main() {
     else if (message.type === "doc" && message.path === path && !started) {
       started = true;
       addStyle(message.theme.editCss);
-      createEditor(root, message, post, probes, assets).catch((error) => {
+      createEditor(root, message, mount.headings, post, probes, assets).catch((error) => {
         console.error(error);
         root.textContent = `zdrafts couldn't open this page: ${error}`;
       });

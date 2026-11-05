@@ -205,13 +205,20 @@ export function encodeTera(source: string): string {
       const tag = source.slice(i, end);
       const inner = kind === "#" ? "" : tagInner(tag);
 
+      // {% raw %}…{% endraw %}: Tera writes what's between as it is, and Zola renders that as
+      // Markdown. The tags are tokens; what's between is Markdown, with no components in it
       if (kind === "%" && /^raw$/.test(inner)) {
         const endRaw = /\{%-?\s*endraw\s*-?%\}/g;
         endRaw.lastIndex = end;
         const match = endRaw.exec(source);
-        const stop = match ? match.index + match[0].length : source.length;
-        out += emit({ type: "tera", raw: source.slice(i, stop), block: startsLine && atLineEnd(stop) });
+        out += emit({ type: "tera", raw: tag, block: startsLine && atLineEnd(end) });
+        const stop = match ? match.index : source.length;
+        out += source.slice(end, stop);
         i = stop;
+        if (match) {
+          out += emit({ type: "tera", raw: match[0], block: /(^|\n)[ \t]*$/.test(source.slice(0, stop)) && atLineEnd(stop + match[0].length) });
+          i = stop + match[0].length;
+        }
         lineStart = false;
         continue;
       }
