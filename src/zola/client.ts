@@ -15,7 +15,8 @@ export class ZolaClient {
         if (data.type === "ready") resolve();
         else if (data.type === "failed") reject(new Error(`Couldn't load Zola ${zola}: ${data.error}`));
         else if (data.type === "built") {
-          this.pending.get(data.id)?.({ ok: data.ok, stderr: data.stderr, files: new Map(data.files), ms: data.ms });
+          const { type: _, id, files, ...result } = data;
+          this.pending.get(id)?.({ ...result, files: new Map(files) });
           this.pending.delete(data.id);
         }
       };
@@ -30,14 +31,18 @@ export class ZolaClient {
     return this.ready;
   }
 
-  /** Build the repository's files with `overrides` applied (null deletes a file), draft pages included unless `drafts` is false */
-  build(overrides: Map<string, Uint8Array | null>, baseUrl: string, drafts = true): Promise<BuildResult> {
+  /**
+   * Build the repository's files with `overrides` applied (null deletes a file), draft pages
+   * included unless `drafts` is false. With a `target`, the result says what changed since the last
+   * build for it.
+   */
+  build(overrides: Map<string, Uint8Array | null>, baseUrl: string, { drafts = true, target }: { drafts?: boolean; target?: string } = {}): Promise<BuildResult> {
     const run = async () => {
       await this.ready;
       const id = this.nextId++;
       return new Promise<BuildResult>((resolve) => {
         this.pending.set(id, resolve);
-        const message: WorkerRequest = { type: "build", id, baseUrl, drafts, overrides: [...overrides] };
+        const message: WorkerRequest = { type: "build", id, baseUrl, drafts, overrides: [...overrides], target };
         this.worker.postMessage(message);
       });
     };

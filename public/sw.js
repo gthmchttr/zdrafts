@@ -1,19 +1,27 @@
-// zdrafts service worker: serves the in-browser builds of the site: the editing build under /site/
-// and the view build (the site as `zola build` makes it) under /view/.
+// zdrafts service worker, on the sandbox's origin (src/origins.ts): serves the in-browser builds of
+// the site, the editing build under /site/ and the view build (the site as `zola build` makes it)
+// under /view/.
 //
-// The page writes each build's output into Cache Storage (src/shell/site-cache.ts); this serves it
-// so the site's own CSS, fonts, images and links work in the preview iframe. View pages are served as
-// built, scripts included; links that leave /view/ (root-relative ones a theme hardcodes) are kept in it. A page requested with
-// ?zdrafts-edit=<content path> is served for editing: the theme's scripts are removed (they would
-// rewrite the editable DOM; inline <head> scripts stay) and the zdrafts editor is injected. One requested with ?zdrafts-preview
-// keeps its scripts and only gets its link clicks handed to zdrafts.
+// The app sends each build to the sandbox's host page (src/sandbox/host.ts), which writes it into
+// Cache Storage; this serves it so the site's own CSS, fonts, images and links work in the app's
+// frames. Every page gets /zdrafts-page.js (public/zdrafts-page.js), which tells the app how tall
+// it is and hands its links to the app (or, in the view, keeps them in /view/).
+// - /view/ pages are served as built, scripts included.
+// - A page requested with ?zdrafts-edit=<content path> is served for editing: the theme's scripts
+//   are removed (they would rewrite the editable DOM; inline <head> scripts stay) and the zdrafts
+//   editor is injected.
+// - Other /site/ pages (previews of tags, search…) keep their scripts.
 //
-// Site pages run on zdrafts' origin, where the GitHub token is stored (src/repo/token.ts), so every
-// page gets a Content-Security-Policy: only scripts from this origin (the site's own and the
-// editor), and no requests to other origins (analytics, embeds' scripts…).
-// Keep in sync with src/shell/site-cache.ts
+// When the sandbox is the app's own origin (no sandbox configured), the GitHub token is on this
+// origin too, so pages get a Content-Security-Policy: only this origin's scripts and no requests to
+// other origins. With a sandbox of its own, nothing secret is here, and previews and the view run
+// everything the real site runs.
+// Keep in sync with src/shell/site-host.ts
 const CACHES = { "/site/": "zdrafts-site", "/view/": "zdrafts-view" };
-const FRAME_ENTRY = new URL(self.location.href).searchParams.get("frame") || "/frame.js";
+const PARAMS = new URL(self.location.href).searchParams;
+const FRAME_ENTRY = PARAMS.get("frame") || "/frame.js";
+const APP_ORIGIN = PARAMS.get("app") || self.location.origin;
+const ISOLATED = APP_ORIGIN !== self.location.origin;
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
@@ -45,10 +53,11 @@ async function serve(url, prefix) {
   }
   if (!(response.headers.get("content-type") || "").startsWith("text/html")) return response;
   let html = await response.text();
-  // At the end, not in <head>: a minified page may have no </head>, and nothing may go before its doctype
-  if (prefix === "/view/") return htmlResponse(`${html}<script>${VIEW_LINKS}</script>`, PREVIEW_POLICY);
   const edit = url.searchParams.get("zdrafts-edit");
-  if (!edit) return htmlResponse(inject(html, `<script>${LINKS}</script>`), PREVIEW_POLICY);
+  const mode = prefix === "/view/" ? "view" : edit ? "edit" : "preview";
+  // At the end, not in <head>: a minified page may have no </head>, and nothing may go before its doctype
+  const page = `<script src="/zdrafts-page.js?${new URLSearchParams({ app: APP_ORIGIN, mode })}"></script>`;
+  if (!edit) return htmlResponse(html + page, ISOLATED ? null : PREVIEW_POLICY);
   // Inline scripts in <head> stay: they set the page up before it's drawn (dark mode, the skin's
   // stylesheet) and don't touch content, which doesn't exist yet. Everything else goes: external
   // scripts and anything in <body> would rewrite the page being edited.
@@ -70,7 +79,7 @@ async function serve(url, prefix) {
   const hashes = await Promise.all(kept.map(sha256));
   const policy = EDIT_POLICY.replace("script-src 'self'", ["script-src 'self'", ...hashes.map((hash) => `'sha256-${hash}'`)].join(" "));
   return htmlResponse(
-    inject(head + body, `<meta name="zdrafts-edit" content="${escapeHtml(edit)}"><script type="module" src="${escapeHtml(FRAME_ENTRY)}"></script>`),
+    inject(head + body, `<meta name="zdrafts-edit" content="${escapeHtml(edit)}"><script type="module" src="${escapeHtml(FRAME_ENTRY)}"></script>`) + page,
     policy,
   );
 }
@@ -80,38 +89,19 @@ async function sha256(text) {
   return btoa(String.fromCharCode(...digest));
 }
 
-// Same as the editor's link handling (src/frame/main.ts): zdrafts decides where a link goes
-const LINKS = `document.addEventListener("click", (event) => {
-  const link = event.target.closest && event.target.closest("a[href]");
-  if (!link || event.defaultPrevented || (link.pathname === location.pathname && link.hash)) return;
-  event.preventDefault();
-  parent.postMessage({ type: "navigate", href: link.href }, location.origin);
-}, true);`;
-
-// In the view, the site's links work as on the real site: within /view/, other sites in a new tab
-const VIEW_LINKS = `document.addEventListener("click", (event) => {
-  const link = event.target.closest && event.target.closest("a[href]");
-  if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
-  if (link.origin !== location.origin) {
-    if (window.top !== window) { event.preventDefault(); window.open(link.href, "_blank", "noopener"); }
-  } else if (link.pathname !== "/view" && !link.pathname.startsWith("/view/")) {
-    event.preventDefault();
-    location.href = "/view" + link.pathname + link.search + link.hash;
-  }
-});`;
-
 function inject(html, tags) {
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${tags}</head>`) : tags + html;
 }
 
-// Previews keep the theme's inline scripts (search, theme switchers); the editor needs none
+// Without a sandbox of its own: previews keep the theme's inline scripts (search, theme switchers);
+// the editor needs none
 const PREVIEW_POLICY = "script-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
 const EDIT_POLICY = "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
 
 function htmlResponse(html, policy) {
-  return new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": policy },
-  });
+  const headers = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+  if (policy) headers["content-security-policy"] = policy;
+  return new Response(html, { headers });
 }
 
 function escapeHtml(text) {

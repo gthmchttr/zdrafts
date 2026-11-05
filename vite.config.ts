@@ -14,12 +14,16 @@ export default defineConfig({
     },
   ],
   worker: { format: "es" },
+  // The app on localhost and the site's pages on 127.0.0.1: two origins, one server (src/origins.ts)
+  server: { host: "127.0.0.1" },
+  preview: { host: "127.0.0.1" },
   build: {
     target: "es2022",
     rollupOptions: {
       // The frame editor is injected into site pages by the service worker, so it needs a
       // stable URL: /frame.js (see registerServiceWorker in src/shell/site-cache.ts).
-      input: { main: "index.html", frame: "src/frame/main.ts" },
+      // host.html: the sandbox's page that keeps builds for its service worker (src/sandbox/host.ts)
+      input: { main: "index.html", host: "host.html", frame: "src/frame/main.ts" },
       output: {
         entryFileNames: (chunk) => (chunk.name === "frame" ? "frame.js" : "assets/[name]-[hash].js"),
       },

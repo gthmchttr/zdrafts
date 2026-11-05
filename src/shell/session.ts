@@ -9,10 +9,13 @@ import { findTheme, type ThemeAdapter } from "../themes/index.ts";
 import { chromeOverrides, findPages, previewConfig } from "../zola/chrome.ts";
 import { newPageText, rewriteLinks, slugify } from "./files.ts";
 import { ZolaClient } from "../zola/client.ts";
+import type { BuildResult } from "../zola/protocol.ts";
 import { indexComponents, type ComponentInfo } from "../zola/components.ts";
 import { parseProbe, probeKey, probePage, type ProbeCall, type ProbeResult } from "../zola/probe.ts";
 import { probeContext, type ProbeContext } from "../zola/probecontext.ts";
-import { fingerprint, registerServiceWorker, SiteCache, SITE_PREFIX, VIEW_PREFIX } from "./site-cache.ts";
+import { SANDBOX_ORIGIN } from "../origins.ts";
+import { fingerprint } from "../zola/fingerprint.ts";
+import { connectSandbox, SiteTarget, SITE_PREFIX, VIEW_PREFIX } from "./site-host.ts";
 
 export type OpenProgress = Progress | { stage: "building" };
 
@@ -36,7 +39,7 @@ const IMAGE = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
 const contextKey = (context: string, call: ProbeCall) => `${context}\u0001${probeKey(call)}`;
 
 export class Session {
-  readonly baseUrl = `${location.origin}${SITE_PREFIX}`;
+  readonly baseUrl = `${SANDBOX_ORIGIN}${SITE_PREFIX}`;
   readonly repoKey: string;
   readonly components: Map<string, ComponentInfo>;
   pages = new Map<string, string>();
@@ -50,8 +53,8 @@ export class Session {
   private probeCalls = new Map<string, Map<string, ProbeCall>>();
   /** How components are probed for each page (see src/zola/probecontext.ts), with the probe page's folder */
   private probeContexts = new Map<string, ProbeContext & { dir: string }>();
-  private cache = new SiteCache();
-  private viewCache = new SiteCache("zdrafts-view", VIEW_PREFIX);
+  private cache = new SiteTarget("zdrafts-site", SITE_PREFIX);
+  private viewCache = new SiteTarget("zdrafts-view", VIEW_PREFIX);
   /** The last view build, by what it was built from (viewKey) */
   private view: { key: string; build: Promise<ViewBuild> } | null = null;
   private listeners = new Set<() => void>();
@@ -70,13 +73,13 @@ export class Session {
   }
 
   static async open(ref: RepoRef, onProgress: (progress: OpenProgress) => void): Promise<Session> {
-    const [repo] = await Promise.all([loadRepo(ref, onProgress), registerServiceWorker()]);
+    const [repo] = await Promise.all([loadRepo(ref, onProgress), connectSandbox()]);
     return Session.start(repo, onProgress);
   }
 
   /** A site made in this browser (src/site/local.ts) */
   static async openLocal(id: string, onProgress: (progress: OpenProgress) => void): Promise<Session> {
-    const [site] = await Promise.all([getLocalSite(id), registerServiceWorker()]);
+    const [site] = await Promise.all([getLocalSite(id), connectSandbox()]);
     if (!site) throw new SiteError("That site isn't in this browser any more.");
     return Session.start(localRepo(site), onProgress);
   }
@@ -176,7 +179,8 @@ export class Session {
     let path = `static/images/${clean}`;
     for (let n = 2; this.exists(path); n++) path = `static/images/${stem}-${n}${ext}`;
     await this.drafts.put(path, data);
-    await this.cache.write(new Map([[path.slice("static/".length), data]]), false);
+    // (A copy: the sandbox takes the buffer, and the draft keeps this one)
+    await this.cache.write(new Map([[path.slice("static/".length), data.slice()]]));
     this.emit();
     this.scheduleRebuild(false);
     return path;
@@ -336,12 +340,12 @@ export class Session {
     const probePaths: string[] = [];
     for (const [id, calls] of probing) probePaths.push(...this.addProbePage(overrides, id, [...calls.values()]));
 
-    let result = await this.zola.build(overrides, this.baseUrl);
+    let result = await this.zola.build(overrides, this.baseUrl, { target: "site" });
     if (!result.ok && probing.length) {
       // A component call failed (e.g. an image that doesn't exist): build without the probe pages
       // so the site still updates, then find which calls fail
       for (const path of probePaths) overrides.delete(path);
-      const plain = await this.zola.build(overrides, this.baseUrl);
+      const plain = await this.zola.build(overrides, this.baseUrl, { target: "site" });
       if (plain.ok) {
         result = plain;
         for (const [id, calls] of probing) await this.probeIndividually(id, [...calls.values()], overrides);
@@ -361,8 +365,8 @@ export class Session {
     }
 
     if (result.ok) {
-      await this.cache.write(result.files);
       this.pages = findPages(result.files);
+      await this.publish(this.cache, result);
       this.status = { state: "ok", ms: result.ms };
       if (this.layoutDirty) {
         this.layoutDirty = false;
@@ -451,26 +455,33 @@ export class Session {
     const overrides = new Map<string, Uint8Array | null>();
     for (const path of this.drafts.paths()) overrides.set(path, this.bytes(path) ?? null);
     const previous = this.view?.build;
-    const build = this.zola.build(overrides, `${location.origin}${VIEW_PREFIX}`, drafts).then(async (result) => {
+    const build = this.zola.build(overrides, `${SANDBOX_ORIGIN}${VIEW_PREFIX}`, { drafts, target: "view" }).then(async (result) => {
       // Builds finish in order; so do their writes to the cache
       await previous;
-      if (result.ok) await this.viewCache.write(result.files);
-      return { ok: result.ok, errors: result.stderr, files: new Set(result.files.keys()) };
+      const files = new Set(result.files.keys());
+      if (result.ok) await this.publish(this.viewCache, result);
+      return { ok: result.ok, errors: result.stderr, files };
     });
     this.view = { key, build };
     return build;
   }
 
-  /** The view's URL of an output file ("posts/a/index.html" → "/view/posts/a/") */
+  /** Send what changed in a build to the sandbox (the buffers go with it) */
+  private publish(target: SiteTarget, result: BuildResult): Promise<void> {
+    const puts = new Map(result.changed.map((path) => [path, result.files.get(path)!]));
+    return target.write(puts, result.removed, result.fresh);
+  }
+
+  /** The view's URL of an output file ("posts/a/index.html" → ".../view/posts/a/") */
   static viewUrlOf(output: string): string {
-    return `${VIEW_PREFIX}/${output.replace(/index\.html$/, "")}`;
+    return `${SANDBOX_ORIGIN}${VIEW_PREFIX}/${output.replace(/index\.html$/, "")}`;
   }
 
   /** URL of a content page in the preview, or null if its template doesn't show its content */
   pageUrl(path: string, edit: boolean): string | null {
     const output = this.pages.get(path);
     if (!output) return null;
-    const url = `${SITE_PREFIX}/${output.replace(/index\.html$/, "")}`;
+    const url = `${SANDBOX_ORIGIN}${SITE_PREFIX}/${output.replace(/index\.html$/, "")}`;
     return edit ? `${url}?zdrafts-edit=${encodeURIComponent(path)}` : url;
   }
 
@@ -479,16 +490,16 @@ export class Session {
    * site (shown as a preview: taxonomies, search…), or somewhere outside it.
    */
   resolveLink(href: string): { kind: "page"; path: string } | { kind: "preview"; url: string } | { kind: "external"; href: string } {
-    const target = new URL(href, location.href);
-    if (target.origin !== location.origin) return { kind: "external", href: target.href };
+    const target = new URL(href, SANDBOX_ORIGIN);
+    if (target.origin !== SANDBOX_ORIGIN) return { kind: "external", href: target.href };
     // The site is built for /site/, but themes and menus often link root-relative ("/posts")
     const inSite = target.pathname === SITE_PREFIX || target.pathname.startsWith(`${SITE_PREFIX}/`);
     const sitePath = (inSite ? target.pathname.slice(SITE_PREFIX.length) : target.pathname).replace(/^\/?/, "/");
     const last = sitePath.split("/").pop()!;
-    if (/\.(?!html$)\w+$/.test(last)) return { kind: "external", href: `${SITE_PREFIX}${sitePath}` }; // feeds, files
+    if (/\.(?!html$)\w+$/.test(last)) return { kind: "external", href: `${SANDBOX_ORIGIN}${SITE_PREFIX}${sitePath}` }; // feeds, files
     const output = (last.endsWith(".html") ? sitePath : sitePath.replace(/\/?$/, "/index.html")).slice(1);
     for (const [path, out] of this.pages) if (out === output) return { kind: "page", path };
-    return { kind: "preview", url: `${SITE_PREFIX}${sitePath}${target.search}${target.hash}` };
+    return { kind: "preview", url: `${SANDBOX_ORIGIN}${SITE_PREFIX}${sitePath}${target.search}${target.hash}` };
   }
 
   dispose() {

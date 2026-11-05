@@ -9,6 +9,7 @@ import { Explorer, fileIcon, type ExplorerAction } from "./Explorer.tsx";
 import { canMoveInto } from "./files.ts";
 import { isSectionFile, isTranslation } from "../zola/probecontext.ts";
 import { FramePane, PreviewPane, ViewPane } from "./FramePane.tsx";
+import { SANDBOX_ORIGIN } from "../origins.ts";
 import { isNarrow, useNarrow } from "./narrow.ts";
 import { Session } from "./session.ts";
 import { PublishDialog } from "./PublishDialog.tsx";
@@ -19,11 +20,11 @@ type Mode = "visual" | "source" | "view";
 const MODE_LABELS: Record<Mode, string> = { visual: "Visual", source: "Source", view: "View" };
 type View = "explorer" | "changes";
 const IMAGE = /\.(png|jpe?g|gif|webp|avif|svg|ico)$/i;
-/** Tabs for pages of the built site that aren't content files: "preview:/site/tags/" */
+/** Tabs for pages of the built site that aren't content files: "preview:<sandbox>/site/tags/" */
 const PREVIEW = "preview:";
 
 function previewTitle(tab: string): string {
-  const path = new URL(tab.slice(PREVIEW.length), location.origin).pathname.replace(/^\/site\/?/, "").replace(/\/$/, "");
+  const path = new URL(tab.slice(PREVIEW.length), SANDBOX_ORIGIN).pathname.replace(/^\/site\/?/, "").replace(/\/$/, "");
   return path || "home";
 }
 
@@ -643,9 +644,9 @@ function EditorBody({ session, path, mode, onNavigate }: { session: Session; pat
     );
   }
   if (path.startsWith(PREVIEW)) {
-    const url = new URL(path.slice(PREVIEW.length), location.origin);
+    const url = new URL(path.slice(PREVIEW.length), SANDBOX_ORIGIN);
     url.searchParams.set("zdrafts-preview", "");
-    return <PreviewPane key={`${path}:${session.layoutVersion}`} url={url.pathname + url.search + url.hash} onNavigate={onNavigate} />;
+    return <PreviewPane key={`${path}:${session.layoutVersion}`} url={url.href} onNavigate={onNavigate} />;
   }
   if (IMAGE.test(path)) return <ImageView session={session} path={path} />;
   if (path === session.site.configPath) {

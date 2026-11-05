@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FrameToShell, ShellToFrame } from "../frame/protocol.ts";
 import { splitFrontMatter } from "../markdown/frontmatter.ts";
+import { SANDBOX_ORIGIN, SITE_FRAME_SANDBOX } from "../origins.ts";
 import { useFitFrame, useNarrow } from "./narrow.ts";
 import { Session } from "./session.ts";
 
@@ -23,10 +24,11 @@ export function FramePane({
   useFitFrame(frame, useNarrow());
 
   useEffect(() => {
-    const send = (message: ShellToFrame) => frame.current?.contentWindow?.postMessage(message, location.origin);
+    // The page is in the sandbox (src/origins.ts): only it is talked to, and listened to
+    const send = (message: ShellToFrame) => frame.current?.contentWindow?.postMessage(message, SANDBOX_ORIGIN);
 
     const onMessage = async (event: MessageEvent<FrameToShell>) => {
-      if (event.source !== frame.current?.contentWindow || event.origin !== location.origin) return;
+      if (event.source !== frame.current?.contentWindow || event.origin !== SANDBOX_ORIGIN) return;
       const message = event.data;
       switch (message.type) {
         case "frame-ready": {
@@ -71,7 +73,7 @@ export function FramePane({
 
   return (
     <>
-      <iframe ref={frame} src={url} title={`Editing ${path}`} onLoad={() => setTimeout(() => setLoading(false), 3000)} />
+      <iframe ref={frame} src={url} sandbox={SITE_FRAME_SANDBOX} title={`Editing ${path}`} onLoad={() => setTimeout(() => setLoading(false), 3000)} />
       {loading && (
         <div className="progress-bar indeterminate" style={{ position: "absolute", top: 0, left: 0, right: 0 }}>
           <div />
@@ -87,13 +89,13 @@ export function PreviewPane({ url, onNavigate }: { url: string; onNavigate: (hre
   useFitFrame(frame, useNarrow());
   useEffect(() => {
     const onMessage = (event: MessageEvent<FrameToShell>) => {
-      if (event.source !== frame.current?.contentWindow || event.origin !== location.origin) return;
+      if (event.source !== frame.current?.contentWindow || event.origin !== SANDBOX_ORIGIN) return;
       if (event.data.type === "navigate") onNavigate(event.data.href);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [onNavigate]);
-  return <iframe ref={frame} src={url} title={`Preview of ${url}`} />;
+  return <iframe ref={frame} src={url} sandbox={SITE_FRAME_SANDBOX} title={`Preview of ${url}`} />;
 }
 
 /** Whether a page is a draft (draft = true), which `zola build` leaves out */
@@ -121,7 +123,7 @@ export function ViewPane({ session, path }: { session: Session; path: string }) 
       const url = build.ok && output && build.files.has(output) ? Session.viewUrlOf(output) : null;
       setShown((before) => {
         // Same page, new build: reload in place, keeping where the frame was navigated to
-        if (before?.url && before.url === url) frame.current?.contentWindow?.location.reload();
+        if (before?.url && before.url === url) frame.current?.contentWindow?.postMessage({ type: "zdrafts-reload" }, SANDBOX_ORIGIN);
         return { key, url, errors: build.ok ? [] : build.errors };
       });
     });
@@ -137,7 +139,7 @@ export function ViewPane({ session, path }: { session: Session; path: string }) 
           This page is a draft (draft = true), so <code>zola build</code> leaves it out of the site. It's shown as <code>zola serve --drafts</code> would.
         </div>
       )}
-      {shown?.url && <iframe ref={frame} src={shown.url} title={`View of ${path}`} />}
+      {shown?.url && <iframe ref={frame} src={shown.url} sandbox={SITE_FRAME_SANDBOX} title={`View of ${path}`} />}
       {shown && !shown.url && (
         <div className="empty">
           <div>

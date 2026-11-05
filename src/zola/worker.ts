@@ -4,6 +4,7 @@
 // page) on top. Processed images from the last build are fed back as static/processed_images/,
 // which Zola reuses instead of resizing them again.
 /// <reference lib="webworker" />
+import { fingerprint } from "./fingerprint.ts";
 import type { WorkerRequest, WorkerResponse } from "./protocol.ts";
 
 interface Zola {
@@ -18,6 +19,21 @@ interface Zola {
 let zola: Promise<Zola> | null = null;
 let base = new Map<string, Uint8Array>();
 const processed = new Map<string, Uint8Array>();
+/** Each target's last published output: path → fingerprint */
+const published = new Map<string, Map<string, string>>();
+
+/** What changed in `files` since the target's last build (and remember this one) */
+function diff(target: string | undefined, files: Map<string, Uint8Array>) {
+  if (!target) return { changed: [...files.keys()], removed: [], fresh: false };
+  const before = published.get(target);
+  const now = new Map([...files].map(([path, data]) => [path, fingerprint(data)]));
+  published.set(target, now);
+  return {
+    changed: [...now].filter(([path, print]) => before?.get(path) !== print).map(([path]) => path),
+    removed: before ? [...before.keys()].filter((path) => !now.has(path)) : [],
+    fresh: !before,
+  };
+}
 
 const post = (message: WorkerResponse, transfer: Transferable[] = []) => (self as DedicatedWorkerGlobalScope).postMessage(message, transfer);
 
@@ -52,8 +68,9 @@ self.onmessage = async ({ data }: MessageEvent<WorkerRequest>) => {
       }
     }
     const entries = [...result.files];
+    const changes = result.ok ? diff(data.target, result.files) : { changed: [], removed: [], fresh: false };
     post(
-      { type: "built", id: data.id, ok: result.ok, stderr: result.stderr, files: entries, ms: Math.round(performance.now() - started) },
+      { type: "built", id: data.id, ok: result.ok, stderr: result.stderr, files: entries, ms: Math.round(performance.now() - started), ...changes },
       [...new Set(entries.map(([, bytes]) => bytes.buffer as ArrayBuffer))],
     );
   }

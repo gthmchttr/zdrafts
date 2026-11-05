@@ -9,6 +9,15 @@ import type { FrameToShell, ShellToFrame } from "./protocol.ts";
 // Matches ASSET_DRAG_TYPE in src/shell/Explorer.tsx
 const ASSET_DRAG_TYPE = "application/x-zdrafts-path";
 
+/**
+ * A file dragged from the explorer, from its URL in this build ("<sandbox>/site/images/a.png" →
+ * "static/images/a.png"): browsers may not pass the custom type from the app's origin to this one.
+ */
+function draggedStatic(uri: string): string {
+  const url = URL.canParse(uri.trim()) ? new URL(uri.trim()) : null;
+  return url && url.origin === location.origin && url.pathname.startsWith("/site/") ? `static/${decodeURIComponent(url.pathname.slice("/site/".length))}` : "";
+}
+
 export class Assets {
   private pending = new Map<number, (message: Extract<ShellToFrame, { type: "asset-added" }>) => void>();
   private nextId = 1;
@@ -64,7 +73,7 @@ export function assetPlugin(assets: Assets, markDirty: () => void) {
             if (!data) return false;
             const at = view.posAtCoords({ left: (event as DragEvent).clientX, top: (event as DragEvent).clientY })?.pos;
             if (at === undefined) return false;
-            const path = data.getData(ASSET_DRAG_TYPE);
+            const path = data.getData(ASSET_DRAG_TYPE) || draggedStatic(data.getData("text/uri-list"));
             if (path) {
               markDirty();
               insertImage(view, at, `/${path.replace(/^static\//, "")}`, altText(path.split("/").pop()!));

@@ -1,5 +1,6 @@
 // The file tree, styled after VS Code's explorer: content/ and static/ of the site
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { SANDBOX_ORIGIN } from "../origins.ts";
 import { canMoveInto } from "./files.ts";
 
 /** What the explorer asks the workbench to do */
@@ -210,6 +211,9 @@ export function Explorer({
               draggedPath.current = node.path;
               event.dataTransfer.setData(ASSET_DRAG_TYPE, node.path);
               event.dataTransfer.setData("text/plain", node.path);
+              // The page being edited is on the sandbox's origin, where browsers may hide custom
+              // types: a static file also goes as its URL there (read by src/frame/assets.ts)
+              if (node.path.startsWith("static/")) event.dataTransfer.setData("text/uri-list", `${SANDBOX_ORIGIN}/site/${node.path.slice("static/".length)}`);
               event.dataTransfer.effectAllowed = IMAGE_FILE.test(node.name) ? "copyMove" : "move";
             }}
             onDragEnd={() => {

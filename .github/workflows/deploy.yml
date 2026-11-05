@@ -34,11 +34,22 @@ jobs:
         run: |
           npm run fixtures
           npm test
+      # The site's pages run on a sandbox origin of their own (src/origins.ts), set with the
+      # repository variables APP_ORIGIN and SANDBOX_ORIGIN; without them, on the app's origin
       - name: Build
         run: npm run build
+        env:
+          VITE_APP_ORIGIN: ${{ vars.APP_ORIGIN }}
+          VITE_SANDBOX_ORIGIN: ${{ vars.SANDBOX_ORIGIN }}
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
+          path: ./dist
+      - name: Keep the build for the sandbox
+        if: vars.SANDBOX_REPO != ''
+        uses: actions/upload-artifact@v5
+        with:
+          name: sandbox
           path: ./dist
   deploy:
     environment:
@@ -50,3 +61,33 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+  # The same build, published to the sandbox's own GitHub Pages site (the repository variable
+  # SANDBOX_REPO, e.g. owner/zdrafts-sandbox, serving SANDBOX_ORIGIN from its gh-pages branch), with
+  # the secret SANDBOX_DEPLOY_KEY: a deploy key of that repository with write access
+  sandbox:
+    if: vars.SANDBOX_REPO != ''
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download the build
+        uses: actions/download-artifact@v5
+        with:
+          name: sandbox
+          path: site
+      - name: Push to the sandbox's Pages branch
+        env:
+          DEPLOY_KEY: ${{ secrets.SANDBOX_DEPLOY_KEY }}
+          SANDBOX_REPO: ${{ vars.SANDBOX_REPO }}
+          SANDBOX_ORIGIN: ${{ vars.SANDBOX_ORIGIN }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/sandbox && chmod 600 ~/.ssh/sandbox
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/sandbox -o StrictHostKeyChecking=accept-new"
+          cd site
+          echo "${SANDBOX_ORIGIN#https://}" > CNAME
+          touch .nojekyll
+          # One commit, replacing the branch: it only ever holds the latest build
+          git init -q -b gh-pages
+          git add -A
+          git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" commit -q -m "Deploy ${GITHUB_SHA}"
+          git push -f "git@github.com:${SANDBOX_REPO}.git" gh-pages

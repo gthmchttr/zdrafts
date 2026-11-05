@@ -57,10 +57,14 @@ the Git Data API and fast-forwards the branch, never force-pushes, and refuses t
 newer commits on the branch changed the same files.
 
 The token stays in the browser (localStorage when "Remember" is ticked, otherwise until the tab
-closes) and is only sent to api.github.com. Anything running on zdrafts' origin can read it,
-including the site's pages shown in the editor, which is why the service worker serves them with a
-Content-Security-Policy that blocks other origins' scripts and requests. For stronger isolation,
-serve the built site from a separate origin (not done yet).
+closes) and is only sent to api.github.com. Sites' pages, with their themes' scripts, never run
+next to it: they're shown from a sandbox, a second origin that only holds build output
+(`src/origins.ts`). Their frames can't read the app's storage or reach its window, can't move its
+tab elsewhere, and only talk to it through messages the app checks.
+
+Without a sandbox origin configured (see Deploying), the pages run on zdrafts' own origin, where
+anything they run could read the token; they then get a Content-Security-Policy that blocks other
+origins' scripts and requests, which narrows that but doesn't close it.
 
 ## Themes
 
@@ -125,19 +129,34 @@ npm test           # Markdown round trip and source preservation on that content
 npm run build      # static site in dist/
 ```
 
-`dist/` is a static site, but it must be served from the root of its origin, with `404.html` for
-unknown paths (GitHub Pages does this): the service worker serves the built site at `/site/` and
-injects the editor (`/frame.js`) into its pages.
+In development the app is on `localhost` and the sandbox on `127.0.0.1`, both from the same server.
+
+## Deploying
+
+`dist/` is a static site, served from the root of its origin with `404.html` for unknown paths
+(GitHub Pages does this). The same `dist/` is served twice:
+
+- at the app's origin, e.g. `https://zdrafts.example.com`;
+- at the sandbox's origin, e.g. `https://zdrafts-site.example.com`, where the service worker
+  serves the built site at `/site/` and `/view/` and injects the editor (`/frame.js`) into its pages.
+
+Build with `VITE_APP_ORIGIN` and `VITE_SANDBOX_ORIGIN` set to them. Keep both on one site
+(subdomains of the same domain): browsers that block third-party storage would otherwise block the
+sandbox inside the app. The GitHub workflow does this with the repository variables `APP_ORIGIN`,
+`SANDBOX_ORIGIN` and `SANDBOX_REPO` (a repository whose GitHub Pages serve the sandbox's domain
+from its `gh-pages` branch) and the secret `SANDBOX_DEPLOY_KEY` (a deploy key of that repository
+with write access).
 
 ## How it works
 
 ```
-Shell (React)                                    Site frame (iframe, same origin)
- intro · explorer · tabs · page settings          page HTML from Zola, theme CSS,
- drafts · export                                  site scripts removed, editor injected
-      │  postMessage                                   ▲
-      ▼                                                │ /site/*
- Zola worker (zola.wasm)  ── output ──►  Service worker (Cache Storage)
+App origin                                        Sandbox origin
+ Shell (React)                                     Site frames (iframes)
+ intro · explorer · tabs · page settings            page HTML from Zola, theme CSS,
+ drafts · export · GitHub token                     editor injected while editing
+      │  postMessage (origins checked)                  ▲
+      ▼                                                 │ /site/*, /view/*
+ Zola worker (zola.wasm) ── changed files ──► Host page ─► Cache Storage ─► Service worker
 ```
 
 - `src/repo/`: loads the repository through the Git Trees API and raw file URLs, including
@@ -152,6 +171,9 @@ Shell (React)                                    Site frame (iframe, same origin
 - `src/frame/`: the Milkdown editor mounted at the marker, with node views that use the theme's
   rendered component markup, the `/` menu and popovers (in a shadow root).
 - `src/themes/`: per-theme adapters (edit-mode CSS, hidden components, menu hints).
+- `src/sandbox/`, `public/sw.js`, `public/zdrafts-page.js`: the sandbox's side: the host page that
+  keeps builds, the service worker that serves them, and the script every site page gets (its
+  height, its links).
 
 ## Credits
 

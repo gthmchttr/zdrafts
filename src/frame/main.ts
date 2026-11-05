@@ -1,15 +1,17 @@
-// Runs inside the site's page (injected by public/sw.js): replaces the page's content marker with
+// Runs inside the site's page, in the sandbox (injected by public/sw.js): replaces the page's content marker with
 // the editor, so everything around it is the theme's real markup and CSS.
 import proseMirrorCss from "@milkdown/kit/prose/view/style/prosemirror.css?inline";
 import tablesCss from "@milkdown/kit/prose/tables/style/tables.css?inline";
 import { Assets } from "./assets.ts";
 import { createEditor } from "./editor.ts";
 import { Probes } from "./probes.ts";
+import { APP_ORIGIN } from "../origins.ts";
 import type { FrameToShell, ShellToFrame } from "./protocol.ts";
 import editorCss from "./frame.css?inline";
 
 const path = document.querySelector<HTMLMetaElement>('meta[name="zdrafts-edit"]')?.content ?? "";
-const post = (message: FrameToShell) => window.parent.postMessage(message, location.origin);
+// The app is on another origin (src/origins.ts): only it is talked to, and listened to
+const post = (message: FrameToShell) => window.parent.postMessage(message, APP_ORIGIN);
 
 function addStyle(css: string) {
   const style = document.createElement("style");
@@ -69,7 +71,7 @@ async function main() {
   const assets = new Assets(post);
   let started = false;
   window.addEventListener("message", (event: MessageEvent<ShellToFrame>) => {
-    if (event.origin !== location.origin || event.source !== window.parent) return;
+    if (event.origin !== APP_ORIGIN || event.source !== window.parent) return;
     const message = event.data;
     if (message.type === "probe-result") probes.receive(message);
     else if (message.type === "asset-added") assets.receive(message);
