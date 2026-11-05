@@ -47,7 +47,7 @@ jobs:
           path: ./dist
       - name: Keep the build for the sandbox
         if: vars.SANDBOX_REPO != ''
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: sandbox
           path: ./dist
@@ -70,7 +70,7 @@ jobs:
     needs: build
     steps:
       - name: Download the build
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: sandbox
           path: site

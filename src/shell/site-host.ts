@@ -17,6 +17,11 @@ const pending = new Map<number, { resolve: () => void; reject: (error: Error) =>
 /** Load the host frame once, and wait until its service worker is ready */
 export function connectSandbox(): Promise<Window> {
   host ??= new Promise<Window>((resolve, reject) => {
+    // A frame that doesn't load (the sandbox's domain not set up, no network) says nothing
+    const timeout = setTimeout(() => {
+      frame.remove();
+      reject(new Error(`zdrafts couldn't reach ${SANDBOX_ORIGIN}, where it shows sites' pages. Check your connection and try again.`));
+    }, 20000);
     const frame = document.createElement("iframe");
     frame.hidden = true;
     frame.title = "zdrafts sandbox";
@@ -24,8 +29,13 @@ export function connectSandbox(): Promise<Window> {
     addEventListener("message", (event: MessageEvent<FromHost>) => {
       if (event.origin !== SANDBOX_ORIGIN || event.source !== frame.contentWindow) return;
       const message = event.data;
-      if (message.type === "host-ready") resolve(frame.contentWindow!);
-      else if (message.type === "host-failed") reject(new Error(message.error));
+      if (message.type === "host-ready") {
+        clearTimeout(timeout);
+        resolve(frame.contentWindow!);
+      } else if (message.type === "host-failed") {
+        clearTimeout(timeout);
+        reject(new Error(message.error));
+      }
       else if (message.type === "written") {
         const waiting = pending.get(message.id);
         pending.delete(message.id);
