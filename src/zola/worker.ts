@@ -1,10 +1,10 @@
 // Builds the site with zola.wasm, off the main thread.
 //
 // Holds the repository's files; each build applies overrides (drafts, marker bodies, the probe
-// page) on top. Processed images from the last build are fed back as static/processed_images/,
-// which Zola reuses instead of resizing them again.
+// page) on top. Images Zola resized are fed back to it (src/zola/processed.ts).
 /// <reference lib="webworker" />
 import { fingerprint } from "./fingerprint.ts";
+import { ProcessedImages } from "./processed.ts";
 import type { WorkerRequest, WorkerResponse } from "./protocol.ts";
 
 interface Zola {
@@ -18,7 +18,7 @@ interface Zola {
 
 let zola: Promise<Zola> | null = null;
 let base = new Map<string, Uint8Array>();
-const processed = new Map<string, Uint8Array>();
+let processed = new ProcessedImages();
 /** Each target's last published output: path → fingerprint */
 const published = new Map<string, Map<string, string>>();
 
@@ -40,14 +40,21 @@ const post = (message: WorkerResponse, transfer: Transferable[] = []) => (self a
 self.onmessage = async ({ data }: MessageEvent<WorkerRequest>) => {
   if (data.type === "init") {
     base = new Map(data.files);
-    processed.clear();
+    processed = new ProcessedImages(data.cacheKey);
     const root = `${data.assetBase}zola/${data.zola}/`;
     zola = import(/* @vite-ignore */ `${root}zola-wasi.js`).then((module) => module.loadZola(new URL(`${root}zola.wasm`, self.location.origin)));
     try {
-      await zola;
+      await Promise.all([zola, processed.load()]);
       post({ type: "ready" });
     } catch (error) {
       post({ type: "failed", error: String(error) });
+    }
+    return;
+  }
+  if (data.type === "update") {
+    for (const [path, value] of data.files) {
+      if (value === null) base.delete(path);
+      else base.set(path, value);
     }
     return;
   }
@@ -57,16 +64,12 @@ self.onmessage = async ({ data }: MessageEvent<WorkerRequest>) => {
       if (value === null) files.delete(path);
       else files.set(path, value);
     }
-    for (const [path, value] of processed) if (!files.has(path)) files.set(path, value);
+    const sources = processed.sources(files);
+    for (const [path, value] of processed.inputs(sources)) if (!files.has(path)) files.set(path, value);
     const started = performance.now();
     // Draft pages (draft = true) are what people edit most, so editing builds always include them
     const result = await (await zola!).build({ files, baseUrl: data.baseUrl, drafts: data.drafts });
-    if (result.ok) {
-      for (const [path, value] of result.files) {
-        // A copy: the output buffers are transferred to the page below
-        if (path.startsWith("processed_images/")) processed.set(`static/${path}`, value.slice());
-      }
-    }
+    if (result.ok) processed.record(result.files, sources, !!data.complete);
     const entries = [...result.files];
     const changes = result.ok ? diff(data.target, result.files) : { changed: [], removed: [], fresh: false };
     post(

@@ -18,6 +18,15 @@ export const isDeleted = (draft: Draft | undefined): draft is Deleted => typeof 
 
 export class DraftStore {
   private drafts = new Map<string, Draft>();
+  /** Goes up with every change, to tell whether anything changed since */
+  revision = 0;
+  /** Called after every change */
+  onChange: (() => void) | null = null;
+
+  private changed() {
+    this.revision++;
+    this.onChange?.();
+  }
 
   /** `repoKey` identifies the repository and branch, e.g. "gthmchttr/gthmchttr.com@main" */
   constructor(readonly repoKey: string) {}
@@ -47,11 +56,13 @@ export class DraftStore {
   /** Save a new file's contents */
   async put(path: string, data: Draft): Promise<void> {
     this.drafts.set(path, data);
+    this.changed();
     if (store) await set(`${this.repoKey}${SEP}${path}`, data, store);
   }
 
   async discard(path: string): Promise<void> {
-    this.drafts.delete(path);
+    if (!this.drafts.delete(path)) return;
+    this.changed();
     if (store) await del(`${this.repoKey}${SEP}${path}`, store);
   }
 }

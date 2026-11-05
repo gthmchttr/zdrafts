@@ -1,6 +1,15 @@
 // Messages between the page and the Zola worker
 export type WorkerRequest =
-  | { type: "init"; zola: string; assetBase: string; files: [string, Uint8Array][] }
+  | {
+      type: "init";
+      zola: string;
+      assetBase: string;
+      files: [string, Uint8Array][];
+      /** Names the repository, so the images Zola resizes are kept for it between sessions */
+      cacheKey?: string;
+    }
+  /** The repository's files changed (a commit): null deletes one */
+  | { type: "update"; files: [string, Uint8Array | null][] }
   | {
       type: "build";
       id: number;
@@ -9,6 +18,8 @@ export type WorkerRequest =
       overrides: [string, Uint8Array | null][];
       /** Where the output is published ("site", "view"): what changed is reported against the last build published there */
       target?: string;
+      /** Every page with its content (not the editing build): resized images it didn't use can go */
+      complete?: boolean;
     };
 
 export type WorkerResponse =

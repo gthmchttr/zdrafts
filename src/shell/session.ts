@@ -14,7 +14,6 @@ import { indexComponents, type ComponentInfo } from "../zola/components.ts";
 import { parseProbe, probeKey, probePage, type ProbeCall, type ProbeResult } from "../zola/probe.ts";
 import { probeContext, type ProbeContext } from "../zola/probecontext.ts";
 import { SANDBOX_ORIGIN } from "../origins.ts";
-import { fingerprint } from "../zola/fingerprint.ts";
 import { connectSandbox, SiteTarget, SITE_PREFIX, VIEW_PREFIX } from "./site-host.ts";
 
 export type OpenProgress = Progress | { stage: "building" };
@@ -35,6 +34,8 @@ export interface BuildStatus {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const IMAGE = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
+/** View builds slower than this (the first, resizing images) aren't done in the background */
+const WARM_VIEW_MS = 2000;
 
 const contextKey = (context: string, call: ProbeCall) => `${context}\u0001${probeKey(call)}`;
 
@@ -57,6 +58,9 @@ export class Session {
   private viewCache = new SiteTarget("zdrafts-view", VIEW_PREFIX);
   /** The last view build, by what it was built from (viewKey) */
   private view: { key: string; build: Promise<ViewBuild> } | null = null;
+  /** How the view was last built, once it has been: then it's rebuilt in the background while cheap */
+  private viewed: { drafts: boolean; ms: number } | null = null;
+  private warmTimer: ReturnType<typeof setTimeout> | undefined;
   private listeners = new Set<() => void>();
   private building: Promise<void> | null = null;
   private rebuildQueued = false;
@@ -70,6 +74,7 @@ export class Session {
   ) {
     this.repoKey = repo.local ? repo.fullName : `${repo.owner}/${repo.repo}@${repo.ref}`;
     this.components = indexComponents(repo.files);
+    drafts.onChange = () => this.warmView();
   }
 
   static async open(ref: RepoRef, onProgress: (progress: OpenProgress) => void): Promise<Session> {
@@ -94,7 +99,8 @@ export class Session {
     const drafts = new DraftStore(repo.local ? repo.fullName : `${repo.owner}/${repo.repo}@${repo.ref}`);
     await drafts.load();
     onProgress({ stage: "building" });
-    const zola = new ZolaClient(site.zola, repo.files);
+    // Resized images are kept per repository (or site made here), whatever the branch
+    const zola = new ZolaClient(site.zola, repo.files, repo.local ? `local:${repo.local}` : repo.fullName.toLowerCase());
     await zola.whenReady();
     const session = new Session(repo, site, theme, drafts, zola);
     await session.rebuild();
@@ -297,6 +303,8 @@ export class Session {
       else this.repo.files.set(path, typeof data === "string" ? encoder.encode(data) : data);
       await this.drafts.discard(path);
     }
+    // The worker builds from the repository's files: they're the committed ones now
+    this.zola.update(new Map([...files.keys()].map((path) => [path, this.repo.files.get(path) ?? null])));
     this.emit();
     return sha;
   }
@@ -436,11 +444,7 @@ export class Session {
 
   /** What a view build depends on: the commit, the drafts and whether draft pages are built */
   viewKey(drafts: boolean): string {
-    const files = this.drafts.paths().map((path) => {
-      const data = this.bytes(path);
-      return `${path}:${data ? fingerprint(data) : "-"}`;
-    });
-    return [this.repo.commit, drafts, ...files].join("\n");
+    return `${this.repo.commit}:${drafts}:${this.drafts.revision}`;
   }
 
   /**
@@ -455,15 +459,28 @@ export class Session {
     const overrides = new Map<string, Uint8Array | null>();
     for (const path of this.drafts.paths()) overrides.set(path, this.bytes(path) ?? null);
     const previous = this.view?.build;
-    const build = this.zola.build(overrides, `${SANDBOX_ORIGIN}${VIEW_PREFIX}`, { drafts, target: "view" }).then(async (result) => {
+    const started = performance.now();
+    const build = this.zola.build(overrides, `${SANDBOX_ORIGIN}${VIEW_PREFIX}`, { drafts, target: "view", complete: true }).then(async (result) => {
       // Builds finish in order; so do their writes to the cache
       await previous;
       const files = new Set(result.files.keys());
       if (result.ok) await this.publish(this.viewCache, result);
+      this.viewed = { drafts, ms: performance.now() - started };
       return { ok: result.ok, errors: result.stderr, files };
     });
     this.view = { key, build };
     return build;
+  }
+
+  /**
+   * Once the view has been looked at, keep it built while editing, when that's quick (resized
+   * images are reused): it's then ready when it's looked at again.
+   */
+  private warmView() {
+    clearTimeout(this.warmTimer);
+    const viewed = this.viewed;
+    if (!viewed || viewed.ms > WARM_VIEW_MS) return;
+    this.warmTimer = setTimeout(() => void this.buildView(viewed.drafts), 1500);
   }
 
   /** Send what changed in a build to the sandbox (the buffers go with it) */
@@ -503,6 +520,8 @@ export class Session {
   }
 
   dispose() {
+    clearTimeout(this.warmTimer);
+    this.drafts.onChange = null;
     this.zola.dispose();
   }
 }
