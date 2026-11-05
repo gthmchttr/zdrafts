@@ -92,6 +92,8 @@ export function localRepo(site: LocalSite): LoadedRepo {
     private: false,
     ref: "local",
     commit: "",
+    // All here: nothing to fetch later
+    notDownloaded: new Map(),
     entries: [...site.files].map(([path, data]) => {
       const theme = path.startsWith(themePrefix);
       return {

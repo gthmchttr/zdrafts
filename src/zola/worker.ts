@@ -51,6 +51,11 @@ self.onmessage = async ({ data }: MessageEvent<WorkerRequest>) => {
     }
     return;
   }
+  if (data.type === "read") {
+    const file = base.get(data.path);
+    post({ type: "file", id: data.id, data: file ? file.slice() : null });
+    return;
+  }
   if (data.type === "update") {
     for (const [path, value] of data.files) {
       if (value === null) base.delete(path);

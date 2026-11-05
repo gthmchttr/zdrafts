@@ -45,6 +45,8 @@ async function serve(url, prefix) {
     response = await cache.match(candidate);
     if (response) break;
   }
+  // A static file not downloaded with the site: from GitHub, the first time
+  if (!response) response = await lazyFile(path.slice(prefix.length));
   if (!response) {
     return new Response(`<!doctype html><title>Not found</title><p style="font:14px system-ui;padding:2rem">${escapeHtml(path)} isn't part of this build.</p>`, {
       status: 404,
@@ -82,6 +84,33 @@ async function serve(url, prefix) {
     inject(head + body, `<meta name="zdrafts-edit" content="${escapeHtml(edit)}"><script type="module" src="${escapeHtml(FRAME_ENTRY)}"></script>`) + page,
     policy,
   );
+}
+
+// Files not downloaded with the site (src/repo/lazy.ts): the host page (src/sandbox/host.ts) keeps
+// their list, path on the site → [URL, type]; each is fetched once, then kept in the same cache.
+// Keep in sync with src/sandbox/host.ts
+const LAZY_CACHE = "zdrafts-lazy";
+const LAZY_INDEX = "/__zdrafts__/lazy.json";
+let lazyIndex = { version: null, files: {} };
+
+async function lazyFile(sitePath) {
+  const cache = await caches.open(LAZY_CACHE);
+  const index = await cache.match(LAZY_INDEX);
+  if (!index) return null;
+  const version = index.headers.get("x-zdrafts-version");
+  if (version !== lazyIndex.version) lazyIndex = { version, files: await index.json() };
+  const file = Object.hasOwn(lazyIndex.files, sitePath) ? lazyIndex.files[sitePath] : null;
+  if (!file) return null;
+  const [url, type] = file;
+  let body = await cache.match(url);
+  if (!body) {
+    const fetched = await fetch(url).catch(() => null);
+    if (!fetched || !fetched.ok) return null;
+    await cache.put(url, fetched.clone());
+    body = fetched;
+  }
+  // GitHub serves most files as text/plain
+  return new Response(body.body, { headers: { "content-type": type } });
 }
 
 async function sha256(text) {

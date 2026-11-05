@@ -39,6 +39,21 @@ export function connectSandbox(): Promise<Window> {
   return host;
 }
 
+function send(message: ToHost, transfer: Transferable[] = []): Promise<void> {
+  return connectSandbox().then(
+    (window) =>
+      new Promise<void>((resolve, reject) => {
+        pending.set(message.id, { resolve, reject });
+        window.postMessage(message, SANDBOX_ORIGIN, transfer);
+      }),
+  );
+}
+
+/** Tell the sandbox which files the site serves weren't downloaded: [path on the site, URL] */
+export function sendNotDownloaded(files: [string, string][]): Promise<void> {
+  return send({ type: "lazy", id: nextId++, files });
+}
+
 /**
  * One build's place in the sandbox: a cache and the prefix it's served under. Writes are applied
  * in order; the files' buffers are handed over to the sandbox (not copied), so they can't be used
@@ -53,15 +68,9 @@ export class SiteTarget {
   ) {}
 
   write(puts: Map<string, Uint8Array>, deletes: string[] = [], reset = false): Promise<void> {
-    const run = async () => {
-      const window = await connectSandbox();
-      const id = nextId++;
-      const message: ToHost = { type: "write", id, cache: this.cache, prefix: this.prefix, puts: [...puts], deletes, reset };
-      const transfer = [...new Set([...puts.values()].map((data) => data.buffer as ArrayBuffer))];
-      await new Promise<void>((resolve, reject) => {
-        pending.set(id, { resolve, reject });
-        window.postMessage(message, SANDBOX_ORIGIN, transfer);
-      });
+    const run = () => {
+      const message: ToHost = { type: "write", id: nextId++, cache: this.cache, prefix: this.prefix, puts: [...puts], deletes, reset };
+      return send(message, [...new Set([...puts.values()].map((data) => data.buffer as ArrayBuffer))]);
     };
     this.queue = this.queue.then(run, run);
     return this.queue;

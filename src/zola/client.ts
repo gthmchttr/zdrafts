@@ -6,16 +6,24 @@ export class ZolaClient {
   private ready: Promise<void>;
   private nextId = 1;
   private pending = new Map<number, (result: BuildResult) => void>();
+  private reads = new Map<number, (data: Uint8Array | undefined) => void>();
   private queue: Promise<unknown> = Promise.resolve();
 
-  /** `cacheKey` names the repository, so resized images are kept for it between sessions */
-  constructor(zola: string, files: Map<string, Uint8Array>, cacheKey?: string) {
+  /**
+   * `cacheKey` names the repository, so resized images are kept for it between sessions. Files
+   * `kept` says no to are handed to the worker and removed from `files` (read them with read());
+   * the others are copied.
+   */
+  constructor(zola: string, files: Map<string, Uint8Array>, cacheKey?: string, kept: (path: string) => boolean = () => true) {
     this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
     this.ready = new Promise((resolve, reject) => {
       this.worker.onmessage = ({ data }: MessageEvent<WorkerResponse>) => {
         if (data.type === "ready") resolve();
         else if (data.type === "failed") reject(new Error(`Couldn't load Zola ${zola}: ${data.error}`));
-        else if (data.type === "built") {
+        else if (data.type === "file") {
+          this.reads.get(data.id)?.(data.data ?? undefined);
+          this.reads.delete(data.id);
+        } else if (data.type === "built") {
           const { type: _, id, files, ...result } = data;
           this.pending.get(id)?.({ ...result, files: new Map(files) });
           this.pending.delete(data.id);
@@ -23,9 +31,17 @@ export class ZolaClient {
       };
       this.worker.onerror = (event) => reject(new Error(event.message));
     });
-    // Copies: the repository's files stay usable on this side
-    const message: WorkerRequest = { type: "init", zola, assetBase: import.meta.env.BASE_URL, files: [...files].map(([p, d]) => [p, d.slice()]), cacheKey };
-    this.worker.postMessage(message);
+    // A buffer is handed over only if no file kept here uses it (symbolic links share theirs)
+    const keptBuffers = new Set([...files].filter(([path]) => kept(path)).map(([, data]) => data.buffer));
+    const transfer = new Set<ArrayBuffer>();
+    const sent = [...files].map(([path, data]): [string, Uint8Array] => {
+      if (kept(path) || keptBuffers.has(data.buffer)) return [path, data.slice()];
+      files.delete(path);
+      transfer.add(data.buffer as ArrayBuffer);
+      return [path, data];
+    });
+    const message: WorkerRequest = { type: "init", zola, assetBase: import.meta.env.BASE_URL, files: sent, cacheKey };
+    this.worker.postMessage(message, [...transfer]);
   }
 
   whenReady(): Promise<void> {
@@ -56,7 +72,20 @@ export class ZolaClient {
     return result;
   }
 
-  /** The repository's files changed (a commit); null deletes one. Applies to the builds after it */
+  /** A repository file handed to the worker (not kept here) */
+  read(path: string): Promise<Uint8Array | undefined> {
+    return this.ready.then(
+      () =>
+        new Promise((resolve) => {
+          const id = this.nextId++;
+          this.reads.set(id, resolve);
+          const message: WorkerRequest = { type: "read", id, path };
+          this.worker.postMessage(message);
+        }),
+    );
+  }
+
+  /** The repository's files changed (a commit, a file downloaded later); null deletes one. Applies to the builds after it */
   update(files: Map<string, Uint8Array | null>) {
     const message: WorkerRequest = { type: "update", files: [...files].map(([p, d]) => [p, d && d.slice()]) };
     this.worker.postMessage(message);

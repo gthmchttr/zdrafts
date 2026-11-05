@@ -173,7 +173,11 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
 
   const exportChanges = () => {
     const files: Record<string, Uint8Array> = {};
-    for (const path of session.drafts.paths()) files[path] = session.bytes(path)!;
+    for (const path of session.drafts.paths()) {
+      // (Deleted files aren't in the zip)
+      const data = session.bytes(path);
+      if (data) files[path] = data;
+    }
     const name = `${session.repo.repo}-drafts-${new Date().toISOString().slice(0, 10)}.zip`;
     download(name, zipSync(files), "application/zip");
   };
@@ -688,12 +692,24 @@ function EditorBody({ session, path, mode, onNavigate }: { session: Session; pat
 
 function ImageView({ session, path }: { session: Session; path: string }) {
   const [info, setInfo] = useState("");
-  const url = useMemo(() => {
-    const data = session.bytes(path);
-    return data ? URL.createObjectURL(new Blob([data as BlobPart], { type: path.endsWith(".svg") ? "image/svg+xml" : "" })) : "";
-  }, [session, path]);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
-  const size = session.bytes(path)?.length ?? 0;
+  // Images may only be in the worker, or not downloaded yet
+  const [image, setImage] = useState<{ url: string; size: number } | null>(null);
+  const draftKey = session.isModified(path) ? session.drafts.revision : 0;
+  useEffect(() => {
+    let url = "";
+    let current = true;
+    void session.readBytes(path).then((data) => {
+      if (!current || !data) return;
+      url = URL.createObjectURL(new Blob([data as BlobPart], { type: path.endsWith(".svg") ? "image/svg+xml" : "" }));
+      setImage({ url, size: data.length });
+    });
+    return () => {
+      current = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [session, path, draftKey]);
+  if (!image) return <div className="image-view" />;
+  const { url, size } = image;
   return (
     <div className="image-view">
       <img

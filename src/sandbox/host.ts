@@ -2,7 +2,7 @@
 // sandbox's service worker and writes the builds the app sends into Cache Storage, where the
 // service worker serves them (/site/, /view/). Only the app may write (src/origins.ts).
 import { APP_ORIGIN, SANDBOX_ORIGIN } from "../origins.ts";
-import type { FromHost, ToHost } from "./protocol.ts";
+import type { FromHost, ToHost, WriteMessage } from "./protocol.ts";
 
 const TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",
@@ -36,7 +36,26 @@ export function contentType(path: string): string {
 
 const reply = (message: FromHost) => parent.postMessage(message, APP_ORIGIN);
 
-async function write({ cache: name, prefix, puts, deletes, reset }: ToHost) {
+// Keep in sync with public/sw.js
+const LAZY_CACHE = "zdrafts-lazy";
+const LAZY_INDEX = "/__zdrafts__/lazy.json";
+
+/**
+ * Keep the list of files not downloaded, with their types, for the service worker, which fetches
+ * them when asked for (and keeps them in the same cache); files no longer listed are dropped.
+ */
+async function lazy(files: [string, string][]) {
+  const cache = await caches.open(LAZY_CACHE);
+  const index = Object.fromEntries(files.map(([path, url]) => [path, [url, contentType(path)]]));
+  const urls = new Set(files.map(([, url]) => url));
+  for (const request of await cache.keys()) {
+    if (new URL(request.url).pathname !== LAZY_INDEX && !urls.has(request.url)) await cache.delete(request);
+  }
+  const version = String(Date.now());
+  await cache.put(LAZY_INDEX, new Response(JSON.stringify(index), { headers: { "content-type": "application/json", "x-zdrafts-version": version } }));
+}
+
+async function write({ cache: name, prefix, puts, deletes, reset }: WriteMessage) {
   if (reset) await caches.delete(name);
   const cache = await caches.open(name);
   await Promise.all([
@@ -51,9 +70,11 @@ async function write({ cache: name, prefix, puts, deletes, reset }: ToHost) {
 async function start() {
   if (location.origin !== SANDBOX_ORIGIN || parent === window) return;
   addEventListener("message", (event: MessageEvent<ToHost>) => {
-    if (event.origin !== APP_ORIGIN || event.source !== parent || event.data?.type !== "write") return;
-    const { id } = event.data;
-    write(event.data).then(
+    if (event.origin !== APP_ORIGIN || event.source !== parent) return;
+    const message = event.data;
+    const { id } = message;
+    const done = message.type === "write" ? write(message) : message.type === "lazy" ? lazy(message.files) : null;
+    done?.then(
       () => reply({ type: "written", id }),
       (error) => reply({ type: "written", id, error: String(error) }),
     );

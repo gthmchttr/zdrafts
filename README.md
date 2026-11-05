@@ -114,7 +114,10 @@ Known limitations:
   next to a preview.
 - A section page whose template lists its pages without its own content is edited in the Source view.
 - File contents come from `raw.githubusercontent.com` (public) or the API's blob endpoint
-  (private repositories) and are cached in IndexedDB by blob SHA.
+  (private repositories) and are cached in IndexedDB by blob SHA. In public repositories, files
+  under `static/` that Zola only copies (scripts, styles, fonts, icons, media) aren't downloaded
+  when the site opens: the sandbox fetches each from GitHub when a page asks for it, and one a
+  build turns out to need is downloaded then and up front from then on (`src/repo/lazy.ts`).
 - In the explorer, pages and files can be created, renamed, moved (drag onto a folder) and deleted;
   folders can't be moved yet. Links to a moved page (`@/…`) or static file (`/…`) are updated.
 

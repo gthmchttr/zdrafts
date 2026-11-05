@@ -2,7 +2,8 @@
 import { DELETED, DraftStore, isDeleted } from "../drafts.ts";
 import { joinFrontMatter, splitFrontMatter } from "../markdown/frontmatter.ts";
 import { commitFiles } from "../repo/commit.ts";
-import { GitHubError, loadRepo, rememberCommit, type LoadedRepo, type Progress, type RepoRef } from "../repo/github.ts";
+import { downloadFiles, GitHubError, loadRepo, rawUrl, rememberCommit, rememberNeeded, type LoadedRepo, type Progress, type RepoRef } from "../repo/github.ts";
+import { missingFiles, servedFiles } from "../repo/lazy.ts";
 import { inspectSite, SiteError, type SiteInfo } from "../repo/site.ts";
 import { getLocalSite, localRepo } from "../site/local.ts";
 import { findTheme, type ThemeAdapter } from "../themes/index.ts";
@@ -14,7 +15,7 @@ import { indexComponents, type ComponentInfo } from "../zola/components.ts";
 import { parseProbe, probeKey, probePage, type ProbeCall, type ProbeResult } from "../zola/probe.ts";
 import { probeContext, type ProbeContext } from "../zola/probecontext.ts";
 import { SANDBOX_ORIGIN } from "../origins.ts";
-import { connectSandbox, SiteTarget, SITE_PREFIX, VIEW_PREFIX } from "./site-host.ts";
+import { connectSandbox, sendNotDownloaded, SiteTarget, SITE_PREFIX, VIEW_PREFIX } from "./site-host.ts";
 
 export type OpenProgress = Progress | { stage: "building" };
 
@@ -34,6 +35,10 @@ export interface BuildStatus {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const IMAGE = /\.(png|jpe?g|gif|webp|avif|svg)$/i;
+/** Files the app doesn't read: outside content/ (page bundles' images go into probe pages), they're only in the worker */
+const BINARY = /\.(png|jpe?g|gif|webp|avif|bmp|tiff?|ico|svg|woff2?|ttf|otf|eot|mp[34]|webm|ogg|wav|pdf|zip|gz|wasm)$/i;
+/** A build missing files that weren't downloaded is tried again with them, this often at most */
+const FETCH_ROUNDS = 20;
 /** View builds slower than this (the first, resizing images) aren't done in the background */
 const WARM_VIEW_MS = 2000;
 
@@ -64,6 +69,10 @@ export class Session {
   private listeners = new Set<() => void>();
   private building: Promise<void> | null = null;
   private rebuildQueued = false;
+  /** Every file of the repository, downloaded or not, and where only the worker has it */
+  private paths: Set<string>;
+  /** The not-downloaded files last told to the sandbox */
+  private servedKey = "";
 
   private constructor(
     readonly repo: LoadedRepo,
@@ -74,7 +83,11 @@ export class Session {
   ) {
     this.repoKey = repo.local ? repo.fullName : `${repo.owner}/${repo.repo}@${repo.ref}`;
     this.components = indexComponents(repo.files);
-    drafts.onChange = () => this.warmView();
+    this.paths = new Set(repo.entries.map((entry) => entry.path));
+    drafts.onChange = () => {
+      this.warmView();
+      void this.syncNotDownloaded();
+    };
   }
 
   static async open(ref: RepoRef, onProgress: (progress: OpenProgress) => void): Promise<Session> {
@@ -100,10 +113,12 @@ export class Session {
     await drafts.load();
     onProgress({ stage: "building" });
     // Resized images are kept per repository (or site made here), whatever the branch
-    const zola = new ZolaClient(site.zola, repo.files, repo.local ? `local:${repo.local}` : repo.fullName.toLowerCase());
+    // A site made here is published from these files, so it keeps them all
+    const kept = (path: string) => !!repo.local || path.startsWith("content/") || !BINARY.test(path);
+    const zola = new ZolaClient(site.zola, repo.files, repo.local ? `local:${repo.local}` : repo.fullName.toLowerCase(), kept);
     await zola.whenReady();
     const session = new Session(repo, site, theme, drafts, zola);
-    await session.rebuild();
+    await Promise.all([session.rebuild(), session.syncNotDownloaded()]);
     return session;
   }
 
@@ -128,7 +143,7 @@ export class Session {
   /** Files that don't exist in the repository yet (added here) */
   isAdded(path: string): boolean {
     const draft = this.drafts.get(path);
-    return draft !== undefined && !isDeleted(draft) && !this.repo.files.has(path);
+    return draft !== undefined && !isDeleted(draft) && !this.paths.has(path);
   }
 
   isDeleted(path: string): boolean {
@@ -137,12 +152,12 @@ export class Session {
 
   exists(path: string): boolean {
     const draft = this.drafts.get(path);
-    return draft !== undefined ? !isDeleted(draft) : this.repo.files.has(path);
+    return draft !== undefined ? !isDeleted(draft) : this.paths.has(path);
   }
 
   /** Every page (Markdown under content/), as edited: added ones in, deleted ones out */
   get contentPages(): string[] {
-    const paths = new Set([...this.repo.files.keys(), ...this.drafts.paths()]);
+    const paths = new Set([...this.paths, ...this.drafts.paths()]);
     return [...paths].filter((path) => path.startsWith("content/") && path.endsWith(".md") && this.exists(path)).sort();
   }
 
@@ -167,11 +182,48 @@ export class Session {
     return this.drafts.get(path) !== undefined;
   }
 
+  /** The file as edited or as in the repository, if it's here: see readBytes for any file */
   bytes(path: string): Uint8Array | undefined {
     const draft = this.drafts.get(path);
     if (draft === undefined) return this.repo.files.get(path);
     if (isDeleted(draft)) return undefined;
     return typeof draft === "string" ? encoder.encode(draft) : draft;
+  }
+
+  /** Any file as edited or as in the repository: from the worker, or downloaded if it wasn't */
+  async readBytes(path: string): Promise<Uint8Array | undefined> {
+    const here = this.bytes(path);
+    if (here || this.drafts.get(path) !== undefined || !this.paths.has(path)) return here;
+    const entry = this.repo.notDownloaded.get(path);
+    if (entry) return (await downloadFiles([entry])).get(path);
+    return this.zola.read(path);
+  }
+
+  /** Tell the sandbox where the files not downloaded are, unless a draft replaces or deletes them */
+  private async syncNotDownloaded(): Promise<void> {
+    const waiting = [...this.repo.notDownloaded.keys()].filter((path) => this.drafts.get(path) === undefined);
+    const served = [...servedFiles(waiting, this.site.theme)].map(([at, path]): [string, string] => [at, rawUrl(this.repo.notDownloaded.get(path)!)]);
+    const key = served.map(([at, url]) => `${at} ${url}`).join("\n");
+    if (key === this.servedKey) return;
+    this.servedKey = key;
+    await sendNotDownloaded(served);
+  }
+
+  /**
+   * Build, downloading files that weren't downloaded when a failed build names them (a stylesheet
+   * hashed by get_url(cachebust=true)…): they're remembered for the next time the site opens.
+   */
+  private async build(overrides: Map<string, Uint8Array | null>, baseUrl: string, options?: Parameters<ZolaClient["build"]>[2]): Promise<BuildResult> {
+    for (let round = 0; ; round++) {
+      const result = await this.zola.build(overrides, baseUrl, options);
+      if (result.ok || round >= FETCH_ROUNDS || !this.repo.notDownloaded.size) return result;
+      const missing = missingFiles(result.stderr, this.repo.notDownloaded.keys());
+      if (!missing.length) return result;
+      const files = await downloadFiles(missing.map((path) => this.repo.notDownloaded.get(path)!));
+      for (const path of missing) this.repo.notDownloaded.delete(path);
+      this.zola.update(files);
+      void rememberNeeded(this.repo.fullName, missing);
+    }
   }
 
   /**
@@ -218,9 +270,10 @@ export class Session {
     if (!this.exists(path)) throw new Error(`${path} doesn't exist.`);
     if (this.exists(to)) throw new Error(`${to} already exists.`);
     const draft = this.drafts.get(path);
-    const data = draft !== undefined && !isDeleted(draft) ? draft : path.endsWith(".md") ? this.text(path) : this.bytes(path)!;
+    const data = draft !== undefined && !isDeleted(draft) ? draft : path.endsWith(".md") ? this.text(path) : await this.readBytes(path);
+    if (data === undefined) throw new Error(`${path} couldn't be read.`);
     await this.drafts.put(to, data);
-    if (this.repo.files.has(path)) await this.drafts.put(path, DELETED);
+    if (this.paths.has(path)) await this.drafts.put(path, DELETED);
     else await this.drafts.discard(path);
     let updated = 0;
     for (const page of this.contentPages) {
@@ -237,7 +290,7 @@ export class Session {
   }
 
   async remove(path: string): Promise<void> {
-    if (this.repo.files.has(path)) await this.drafts.put(path, DELETED);
+    if (this.paths.has(path)) await this.drafts.put(path, DELETED);
     else await this.drafts.discard(path);
     this.emit();
     this.scheduleRebuild();
@@ -301,6 +354,9 @@ export class Session {
     for (const [path, data] of files) {
       if (data === null) this.repo.files.delete(path);
       else this.repo.files.set(path, typeof data === "string" ? encoder.encode(data) : data);
+      if (data === null) this.paths.delete(path);
+      else this.paths.add(path);
+      this.repo.notDownloaded.delete(path);
       await this.drafts.discard(path);
     }
     // The worker builds from the repository's files: they're the committed ones now
@@ -348,12 +404,12 @@ export class Session {
     const probePaths: string[] = [];
     for (const [id, calls] of probing) probePaths.push(...this.addProbePage(overrides, id, [...calls.values()]));
 
-    let result = await this.zola.build(overrides, this.baseUrl, { target: "site" });
+    let result = await this.build(overrides, this.baseUrl, { target: "site" });
     if (!result.ok && probing.length) {
       // A component call failed (e.g. an image that doesn't exist): build without the probe pages
       // so the site still updates, then find which calls fail
       for (const path of probePaths) overrides.delete(path);
-      const plain = await this.zola.build(overrides, this.baseUrl, { target: "site" });
+      const plain = await this.build(overrides, this.baseUrl, { target: "site" });
       if (plain.ok) {
         result = plain;
         for (const [id, calls] of probing) await this.probeIndividually(id, [...calls.values()], overrides);
@@ -409,7 +465,7 @@ export class Session {
       if (this.probes.has(key) && !this.probes.get(key)!.error) continue;
       const single = new Map(overrides);
       this.addProbePage(single, id, [call]);
-      const result = await this.zola.build(single, this.baseUrl);
+      const result = await this.build(single, this.baseUrl);
       const html = result.files.get(output);
       if (result.ok && html) {
         this.probes.set(key, parseProbe(decoder.decode(html), [call])[0]);
@@ -460,7 +516,7 @@ export class Session {
     for (const path of this.drafts.paths()) overrides.set(path, this.bytes(path) ?? null);
     const previous = this.view?.build;
     const started = performance.now();
-    const build = this.zola.build(overrides, `${SANDBOX_ORIGIN}${VIEW_PREFIX}`, { drafts, target: "view", complete: true }).then(async (result) => {
+    const build = this.build(overrides, `${SANDBOX_ORIGIN}${VIEW_PREFIX}`, { drafts, target: "view", complete: true }).then(async (result) => {
       // Builds finish in order; so do their writes to the cache
       await previous;
       const files = new Set(result.files.keys());

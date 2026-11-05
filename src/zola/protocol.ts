@@ -8,8 +8,10 @@ export type WorkerRequest =
       /** Names the repository, so the images Zola resizes are kept for it between sessions */
       cacheKey?: string;
     }
-  /** The repository's files changed (a commit): null deletes one */
+  /** The repository's files changed (a commit, a file downloaded later): null deletes one */
   | { type: "update"; files: [string, Uint8Array | null][] }
+  /** A repository file only the worker has */
+  | { type: "read"; id: number; path: string }
   | {
       type: "build";
       id: number;
@@ -25,6 +27,7 @@ export type WorkerRequest =
 export type WorkerResponse =
   | { type: "ready" }
   | { type: "failed"; error: string }
+  | { type: "file"; id: number; data: Uint8Array | null }
   | ({ type: "built"; id: number; files: [string, Uint8Array][] } & Omit<BuildResult, "files">);
 
 export interface BuildResult {

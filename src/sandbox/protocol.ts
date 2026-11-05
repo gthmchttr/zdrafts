@@ -1,7 +1,16 @@
 // Messages between the app and the sandbox's host page (src/sandbox/host.ts), which keeps the
 // builds the sandbox's service worker serves.
 
-export type ToHost = {
+export type ToHost =
+  | WriteMessage
+  | {
+      /** Files the site serves that weren't downloaded (src/repo/lazy.ts): [path on the site, URL] */
+      type: "lazy";
+      id: number;
+      files: [string, string][];
+    };
+
+export type WriteMessage = {
   type: "write";
   id: number;
   /** Cache Storage cache, served under `prefix` by public/sw.js */

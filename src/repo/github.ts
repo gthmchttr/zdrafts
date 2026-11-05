@@ -7,6 +7,7 @@
 // for the branch's latest commit and downloads what changed.
 import { createStore, entries as storeEntries, get, getMany, set, setMany } from "idb-keyval";
 import { downloadArchive, parseRemote, type Remote } from "./hosts.ts";
+import { downloadedUpFront } from "./lazy.ts";
 import { resolveSymlinks } from "./symlinks.ts";
 import { getToken } from "./token.ts";
 
@@ -45,6 +46,11 @@ export interface LoadedRepo {
   stale?: string;
   /** A site made in this browser and not on GitHub (yet): its id in src/site/local.ts */
   local?: string;
+  /**
+   * Files not downloaded when the site opened (src/repo/lazy.ts), by path: not in `files`. They're
+   * on GitHub at rawUrl(entry), or downloaded with downloadFiles.
+   */
+  notDownloaded: Map<string, RepoEntry>;
 }
 
 export type Progress =
@@ -219,8 +225,13 @@ const privateSources = new Set<string>();
  * A file's contents. Public files come from raw.githubusercontent.com; that doesn't accept tokens
  * from browsers (its CORS preflight refuses Authorization), so private ones come from the API.
  */
+/** A public file's URL on raw.githubusercontent.com */
+export function rawUrl(entry: Pick<RepoEntry, "source" | "commit" | "sourcePath">): string {
+  return `${RAW}/${entry.source}/${entry.commit}/${entry.sourcePath.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 async function raw(source: string, commit: string, path: string, sha: string): Promise<Uint8Array> {
-  const url = `${RAW}/${source}/${commit}/${path.split("/").map(encodeURIComponent).join("/")}`;
+  const url = rawUrl({ source, commit, sourcePath: path });
   for (let attempt = 0; ; attempt++) {
     try {
       if (privateSources.has(source)) {
@@ -307,11 +318,21 @@ export async function loadRepo(ref: RepoRef, onProgress: (progress: Progress) =>
     }
   }
 
-  const files = await downloadEntries(entries.filter((entry) => !archived.has(entry.path)), onProgress);
+  // Public files Zola only copies wait until they're asked for; private ones can't be fetched by the
+  // sandbox (it has no token), and symbolic links are resolved now
+  const needed = new Set(await getNeeded(fullName));
+  const linked = new Set(links);
+  const notDownloaded = new Map<string, RepoEntry>();
+  for (const entry of entries) {
+    if (!head.private && !archived.has(entry.path) && !linked.has(entry.path) && !downloadedUpFront(entry.path) && !needed.has(entry.path)) {
+      notDownloaded.set(entry.path, entry);
+    }
+  }
+  const files = await downloadEntries(entries.filter((entry) => !archived.has(entry.path) && !notDownloaded.has(entry.path)), onProgress);
   for (const [path, data] of archived) files.set(path, data);
   resolveSymlinks(files, links);
   onProgress({ stage: "done" });
-  return { owner: ref.owner, repo: ref.repo, fullName, private: head.private, ref: branch, commit, entries, files, submodules, stale };
+  return { owner: ref.owner, repo: ref.repo, fullName, private: head.private, ref: branch, commit, entries, files, submodules, stale, notDownloaded };
 }
 
 async function downloadEntries(entries: RepoEntry[], onProgress: (progress: Progress) => void) {
@@ -344,6 +365,24 @@ async function downloadEntries(entries: RepoEntry[], onProgress: (progress: Prog
   );
   if (blobStore && fresh.length) await setMany(fresh, blobStore).catch(() => {});
   return files;
+}
+
+/** Download files of a loaded repository (ones not downloaded when it opened) */
+export function downloadFiles(entries: RepoEntry[]): Promise<Map<string, Uint8Array>> {
+  return downloadEntries(entries, () => {});
+}
+
+const neededKey = (fullName: string) => `needed:${fullName.toLowerCase()}`;
+
+async function getNeeded(fullName: string): Promise<string[]> {
+  return (treeStore && (await get<string[]>(neededKey(fullName), treeStore).catch(() => undefined))) || [];
+}
+
+/** Files a build needed that weren't downloaded up front: they will be, next time the site opens */
+export async function rememberNeeded(fullName: string, paths: string[]): Promise<void> {
+  if (!treeStore || !paths.length) return;
+  const known = await getNeeded(fullName);
+  await set(neededKey(fullName), [...new Set([...known, ...paths])], treeStore).catch(() => {});
 }
 
 /** All files of a GitHub repository at a commit (a theme for a new site) */
