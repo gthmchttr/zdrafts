@@ -9,6 +9,7 @@ import { Explorer, fileIcon, type ExplorerAction } from "./Explorer.tsx";
 import { canMoveInto } from "./files.ts";
 import { isSectionFile, isTranslation } from "../zola/probecontext.ts";
 import { FramePane, PreviewPane, ViewPane } from "./FramePane.tsx";
+import { isNarrow, useNarrow } from "./narrow.ts";
 import { Session } from "./session.ts";
 import { PublishDialog } from "./PublishDialog.tsx";
 import { TokenDialog } from "./TokenDialog.tsx";
@@ -24,20 +25,6 @@ const PREVIEW = "preview:";
 function previewTitle(tab: string): string {
   const path = new URL(tab.slice(PREVIEW.length), location.origin).pathname.replace(/^\/site\/?/, "").replace(/\/$/, "");
   return path || "home";
-}
-
-/** Phone-sized screens: one thing at a time, with the views in a bar at the bottom. Keep in sync with styles.css */
-const NARROW = "(max-width: 720px)";
-
-function useNarrow(): boolean {
-  const [narrow, setNarrow] = useState(() => matchMedia(NARROW).matches);
-  useEffect(() => {
-    const query = matchMedia(NARROW);
-    const onChange = () => setNarrow(query.matches);
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
-  return narrow;
 }
 
 function useSession(session: Session) {
@@ -72,9 +59,9 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
   // On a phone the explorer, changes and page settings each take the whole screen, over the editor,
   // so they start closed and close again once something is picked
   const narrow = useNarrow();
-  const [panelOpen, setPanelOpen] = useState(() => !matchMedia(NARROW).matches);
+  const [panelOpen, setPanelOpen] = useState(() => !isNarrow());
   // The sidebar's view; clicking the active view's icon hides the sidebar, as in VS Code
-  const [view, setView] = useState<View | null>(() => (matchMedia(NARROW).matches ? null : "explorer"));
+  const [view, setView] = useState<View | null>(() => (isNarrow() ? null : "explorer"));
   const [token, setTokenState] = useState(getToken);
   useEffect(() => onTokenChange(() => setTokenState(getToken())), []);
   const [tokenDialog, setTokenDialog] = useState<{ reason?: string; then?: () => void } | null>(null);
@@ -244,6 +231,22 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
   };
   const editorShown = !view && !(panelOpen && active?.endsWith(".md"));
 
+  // On a phone, scrolling down the page hides the bar at the bottom (and the browser its own),
+  // so the site has the whole screen; scrolling up brings it back
+  const [barsHidden, setBarsHidden] = useState(false);
+  useEffect(() => {
+    if (!narrow) return setBarsHidden(false);
+    let last = scrollY;
+    const onScroll = () => {
+      const y = scrollY;
+      if (Math.abs(y - last) < 8) return;
+      setBarsHidden(y > last && y > 56);
+      last = y;
+    };
+    addEventListener("scroll", onScroll, { passive: true });
+    return () => removeEventListener("scroll", onScroll);
+  }, [narrow]);
+
   const mode: Mode = (active && modes[active]) || "visual";
   const isMarkdown = !!active && active.endsWith(".md");
   const isPreview = !!active?.startsWith(PREVIEW);
@@ -251,7 +254,7 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
   const repoUrl = `https://github.com/${session.repo.owner}/${session.repo.repo}/tree/${session.repo.ref}`;
 
   return (
-    <div className={`workbench${view ? "" : " sidebar-hidden"}`}>
+    <div className={`workbench${view ? "" : " sidebar-hidden"}${barsHidden && editorShown ? " bars-hidden" : ""}`}>
       <header className="titlebar">
         <span className="brand">
           <span className="codicon codicon-edit" aria-hidden="true" />

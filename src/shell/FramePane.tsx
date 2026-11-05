@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FrameToShell, ShellToFrame } from "../frame/protocol.ts";
 import { splitFrontMatter } from "../markdown/frontmatter.ts";
+import { useFitFrame, useNarrow } from "./narrow.ts";
 import { Session } from "./session.ts";
 
 export function FramePane({
@@ -19,6 +20,7 @@ export function FramePane({
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [loading, setLoading] = useState(true);
+  useFitFrame(frame, useNarrow());
 
   useEffect(() => {
     const send = (message: ShellToFrame) => frame.current?.contentWindow?.postMessage(message, location.origin);
@@ -82,6 +84,7 @@ export function FramePane({
 /** A generated page (taxonomies, search…) as the site shows it, read-only */
 export function PreviewPane({ url, onNavigate }: { url: string; onNavigate: (href: string) => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  useFitFrame(frame, useNarrow());
   useEffect(() => {
     const onMessage = (event: MessageEvent<FrameToShell>) => {
       if (event.source !== frame.current?.contentWindow || event.origin !== location.origin) return;
@@ -108,6 +111,8 @@ export function ViewPane({ session, path }: { session: Session; path: string }) 
   const key = session.viewKey(draft);
   const [shown, setShown] = useState<{ key: string; url: string | null; errors: string[] } | null>(null);
   const output = session.pages.get(path);
+  // (Once there's a frame: it's only shown once the site is built)
+  useFitFrame(frame, useNarrow() && !!shown?.url);
 
   useEffect(() => {
     let current = true;

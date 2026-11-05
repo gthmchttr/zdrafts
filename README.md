@@ -101,7 +101,8 @@ Try it with [gthmchttr/gthmchttr.com](https://github.com/gthmchttr/gthmchttr.com
 
 Each screen has its own address: `/<owner>/<repo>` (or `/<owner>/<repo>/tree/<branch>`) opens a
 repository, `/new` starts a new site and `/local/<id>` is a site made in this browser. On a phone
-the editor takes the whole screen, with Files, Changes and Page settings in a bar at the bottom.
+the editor takes the whole screen, with Files, Changes and Page settings in a bar at the bottom;
+the page scrolls rather than the site's frame, so scrolling down hides that bar and the browser's.
 
 Known limitations:
 
