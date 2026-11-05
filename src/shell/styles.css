@@ -294,6 +294,8 @@ button { font: inherit; color: inherit; }
   flex-shrink: 0;
   scrollbar-width: none;
 }
+/* Safari doesn't know scrollbar-width */
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   display: flex;
   align-items: center;

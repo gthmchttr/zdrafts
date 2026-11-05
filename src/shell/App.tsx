@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { GitHubError, type GitHubErrorKind, type RepoRef } from "../repo/github.ts";
 import { Intro } from "./Intro.tsx";
 import { routeFromUrl, routePath, type Route } from "./routes.ts";
 import { createLocalSite, deleteLocalSite, listLocalSites, type LocalSummary } from "../site/local.ts";
 import type { CatalogTheme } from "../themes/catalog.ts";
 import { Session, SiteError, type OpenProgress } from "./session.ts";
-import { Workbench } from "./Workbench.tsx";
+// Loaded on its own (CodeMirror is most of it), starting as soon as a site starts opening
+const loadWorkbench = () => import("./Workbench.tsx");
+const Workbench = lazy(() => loadWorkbench().then((module) => ({ default: module.Workbench })));
 
 type State =
   | { screen: "intro"; error?: string; errorKind?: GitHubErrorKind; ref?: RepoRef }
@@ -53,6 +55,7 @@ export function App() {
   /** Open a session, showing progress, unless another open started meanwhile */
   const start = useCallback(async (label: string, run: (onProgress: (progress: OpenProgress) => void) => Promise<Session>, failed?: RepoRef) => {
     const attempt = ++opening.current;
+    void loadWorkbench();
     setState({ screen: "loading", label, progress: null });
     try {
       const session = await run((progress) => {
@@ -148,7 +151,13 @@ export function App() {
     setCreating(open);
   }, []);
 
-  if (state.screen === "workbench") return <Workbench session={state.session} onClose={close} onOpenRepo={(ref) => (leave(), void open(ref))} />;
+  if (state.screen === "workbench") {
+    return (
+      <Suspense>
+        <Workbench session={state.session} onClose={close} onOpenRepo={(ref) => (leave(), void open(ref))} />
+      </Suspense>
+    );
+  }
   return (
     <Intro
       recent={readRecent()}

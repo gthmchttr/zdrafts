@@ -1,4 +1,4 @@
-import "@vscode/codicons/dist/codicon.css";
+import "virtual:codicons.css";
 import "./styles.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";

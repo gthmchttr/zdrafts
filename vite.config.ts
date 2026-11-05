@@ -1,10 +1,17 @@
 import { copyFile } from "node:fs/promises";
+import { codiconsCss } from "./src/shell/codicons-css.ts";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [
     react(),
+    // The codicons the UI uses, not the whole icon font (src/shell/codicons.ts)
+    {
+      name: "codicons",
+      resolveId: (id) => (id === "virtual:codicons.css" ? "\0codicons.css" : null),
+      load: (id) => (id === "\0codicons.css" ? codiconsCss() : null),
+    },
     // Screens have their own paths (/new, /owner/repo: src/shell/routes.ts). Static hosts like
     // GitHub Pages serve 404.html for paths they don't have, so it's the app too.
     {

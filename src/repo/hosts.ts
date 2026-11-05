@@ -1,7 +1,6 @@
 // Git hosts besides GitHub, for themes (submodules, or a new site's theme). Their APIs allow
 // browsers (CORS): Forgejo/Gitea give a repository at a commit as one archive, GitLab file by file. Self-hosted servers without
 // CORS can't be reached from a browser; they're reported as such.
-import { unzipSync } from "fflate";
 import { createStore, get, set } from "idb-keyval";
 import { resolveSymlinks, zipSymlinks } from "./symlinks.ts";
 
@@ -55,6 +54,8 @@ export async function downloadArchive(remote: Remote, commit: string): Promise<M
   }
   if (!response.ok) throw new HostError(`${remote.url}: download failed (HTTP ${response.status}).`);
   const zip = new Uint8Array(await response.arrayBuffer());
+  // Only submodules on other hosts come as archives
+  const { unzipSync } = await import("fflate");
   const entries = unzipSync(zip);
   const links = zipSymlinks(zip);
   // Archives put everything in one top folder (repo-commit/)

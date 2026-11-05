@@ -1,12 +1,14 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useState, type FormEvent } from "react";
 import { parseRepoInput, type GitHubErrorKind, type RepoRef } from "../repo/github.ts";
 import { getToken, onTokenChange } from "../repo/token.ts";
 import type { OpenProgress } from "./session.ts";
 import type { LocalSummary } from "../site/local.ts";
 import type { CatalogTheme } from "../themes/catalog.ts";
 import { ConfirmDialog } from "./Dialog.tsx";
-import { NewSite } from "./NewSite.tsx";
 import { TokenDialog } from "./TokenDialog.tsx";
+
+// The theme gallery and its catalog load when it's opened
+const NewSite = lazy(() => import("./NewSite.tsx").then((module) => ({ default: module.NewSite })));
 
 /** Why a token would help after a failed load, or null if it wouldn't */
 function tokenReason(kind: GitHubErrorKind | undefined, repo: string): string | null {
@@ -94,19 +96,21 @@ export function Intro({
 
   if (creating) {
     return (
-      <NewSite
-        busy={!!loading}
-        progress={status ? status.label : undefined}
-        error={!loading && attempted ? error : undefined}
-        onCreate={(theme, title) => {
-          setAttempted(true);
-          onCreate(theme, title);
-        }}
-        onCancel={() => {
-          onNewSite(false);
-          setAttempted(false);
-        }}
-      />
+      <Suspense>
+        <NewSite
+          busy={!!loading}
+          progress={status ? status.label : undefined}
+          error={!loading && attempted ? error : undefined}
+          onCreate={(theme, title) => {
+            setAttempted(true);
+            onCreate(theme, title);
+          }}
+          onCancel={() => {
+            onNewSite(false);
+            setAttempted(false);
+          }}
+        />
+      </Suspense>
     );
   }
 

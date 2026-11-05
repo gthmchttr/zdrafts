@@ -3,6 +3,19 @@
 import { createStore, del, entries, set } from "idb-keyval";
 
 const store = typeof indexedDB === "undefined" ? undefined : createStore("zdrafts-drafts", "drafts");
+
+let persisting = false;
+
+/**
+ * Ask the browser to keep this site's storage (drafts, sites made here) instead of clearing it when
+ * space runs low or, in Safari, after a week without a visit. Asked once there's something to lose:
+ * Firefox asks the user.
+ */
+export function keepStorage() {
+  if (persisting || typeof navigator === "undefined" || !navigator.storage?.persist) return;
+  persisting = true;
+  void navigator.storage.persisted().then((already) => already || navigator.storage.persist()).catch(() => {});
+}
 const SEP = "\u0000";
 
 /** A file deleted (or moved away) */
@@ -25,6 +38,7 @@ export class DraftStore {
 
   private changed() {
     this.revision++;
+    if (this.drafts.size) keepStorage();
     this.onChange?.();
   }
 

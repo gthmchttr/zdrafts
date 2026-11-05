@@ -1,5 +1,4 @@
-import { zipSync } from "fflate";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { splitFrontMatter } from "../markdown/frontmatter.ts";
 import { GitHubError } from "../repo/github.ts";
 import { getToken, onTokenChange } from "../repo/token.ts";
@@ -12,9 +11,11 @@ import { FramePane, PreviewPane, ViewPane } from "./FramePane.tsx";
 import { SANDBOX_ORIGIN } from "../origins.ts";
 import { isNarrow, useNarrow } from "./narrow.ts";
 import { Session } from "./session.ts";
-import { PublishDialog } from "./PublishDialog.tsx";
 import { TokenDialog } from "./TokenDialog.tsx";
 import type { RepoRef } from "../repo/github.ts";
+
+// Only for sites made in this browser
+const PublishDialog = lazy(() => import("./PublishDialog.tsx").then((module) => ({ default: module.PublishDialog })));
 
 type Mode = "visual" | "source" | "view";
 const MODE_LABELS: Record<Mode, string> = { visual: "Visual", source: "Source", view: "View" };
@@ -171,7 +172,8 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
     setTimeout(() => setToast(null), 2500);
   };
 
-  const exportChanges = () => {
+  const exportChanges = async () => {
+    const { zipSync } = await import("fflate");
     const files: Record<string, Uint8Array> = {};
     for (const path of session.drafts.paths()) {
       // (Deleted files aren't in the zip)
@@ -344,7 +346,7 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
           <div className="sidebar-title">
             Changes
             <span className="spacer" />
-            <button className="icon-btn" title="Download changed files (.zip)" disabled={modified.size === 0} onClick={exportChanges}>
+            <button className="icon-btn" title="Download changed files (.zip)" disabled={modified.size === 0} onClick={() => void exportChanges()}>
               <span className="codicon codicon-desktop-download" aria-hidden="true" />
             </button>
           </div>
@@ -593,14 +595,16 @@ export function Workbench({ session, onClose, onOpenRepo }: { session: Session; 
         </ConfirmDialog>
       )}
       {publishing && (
-        <PublishDialog
-          session={session}
-          onClose={() => setPublishing(false)}
-          onOpenRepo={(owner, name) => {
-            setPublishing(false);
-            onOpenRepo({ owner, repo: name });
-          }}
-        />
+        <Suspense>
+          <PublishDialog
+            session={session}
+            onClose={() => setPublishing(false)}
+            onOpenRepo={(owner, name) => {
+              setPublishing(false);
+              onOpenRepo({ owner, repo: name });
+            }}
+          />
+        </Suspense>
       )}
       {dialog?.type === "close" && (
         <ConfirmDialog title={`Close ${session.repo.repo}?`} confirm="Close" onCancel={() => setDialog(null)} onConfirm={onClose}>

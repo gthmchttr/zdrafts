@@ -6,3 +6,6 @@ interface ImportMetaEnv {
   /** Where the site's pages run, e.g. https://zdrafts-site.example.com */
   readonly VITE_SANDBOX_ORIGIN?: string;
 }
+
+/** The codicons the UI uses, as CSS (src/shell/codicons.ts, vite.config.ts) */
+declare module "virtual:codicons.css";

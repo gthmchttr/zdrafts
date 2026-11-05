@@ -6,6 +6,7 @@ import type { CatalogTheme } from "../themes/catalog.ts";
 import { ZolaClient } from "../zola/client.ts";
 import { prepareSite } from "./newsite.ts";
 import { downloadTheme } from "./themes.ts";
+import { keepStorage } from "../drafts.ts";
 
 export interface LocalSite {
   id: string;
@@ -54,6 +55,8 @@ export async function markPublished(id: string, fullName: string): Promise<void>
 
 /** Download the theme, make a site with it that builds, and keep it in this browser */
 export async function createLocalSite(theme: CatalogTheme, title: string, onProgress: (progress: Progress | { stage: "building" }) => void): Promise<LocalSite> {
+  // It only exists in this browser until it's published
+  keepStorage();
   const files = await downloadTheme(theme, onProgress);
   onProgress({ stage: "building" });
   const zola = new ZolaClient(`v${ZOLA_FOR_NEW_SITES}`, new Map());
