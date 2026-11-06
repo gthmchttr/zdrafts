@@ -16,3 +16,13 @@ test("references become links; definitions stay, and are written back", () => {
   tree.children[1] = { type: "definition", identifier: definition.identifier, label: definition.label, url: definition.url, title: definition.title };
   expect(processor.stringify(tree)).toContain('[docs]: https://www.getzola.org "Official"');
 });
+
+test("bare URLs stay text, as in Zola; written links stay links", async () => {
+  const { remarkNoLiteralLinks } = await import("../src/markdown/literal-links.ts");
+  const remarkGfm = (await import("remark-gfm")).default;
+  const processor = unified().use(remarkParse).use(remarkGfm).use(remarkNoLiteralLinks);
+  const source = "See https://example.com and www.zola.org, <https://a.org> and [b](https://b.org).";
+  const tree = processor.runSync(processor.parse(source), source) as Root;
+  const kinds = (tree.children[0] as { children: { type: string; value?: string }[] }).children.map((node) => (node.type === "text" ? node.value : node.type));
+  expect(kinds).toEqual(["See ", "https://example.com", " and ", "www.zola.org", ", ", "link", " and ", "link", "."]);
+});

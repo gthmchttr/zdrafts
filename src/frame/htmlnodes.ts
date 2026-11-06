@@ -93,7 +93,9 @@ function sanitized(html: string, doc: Document): DocumentFragment {
 export const rawHtmlView = $view(htmlSchema.node, () => (node: ProseNode, view) => {
   const doc = view.dom.ownerDocument;
   const value: string = node.attrs.value ?? "";
-  const lone = /^\s*<\/?[A-Za-z][^>]*>\s*$/.test(value);
+  // A tag without its pair: shown as source, as it can't be drawn alone. Not a void element (<br>,
+  // <img>…), which is whole on its own
+  const lone = /^\s*<\/?[A-Za-z][^>]*>\s*$/.test(value) && !/^\s*<(br|hr|img|wbr|input|source|track|col|area|embed|link)\b/i.test(value);
   // HTML that starts with a block element (a whole <p>, <div>, <table>…) takes the width of the page
   const block = !lone && /^\s*<(p|div|table|section|figure|blockquote|ul|ol|dl|pre|h[1-6]|details|aside|nav|header|footer|article|hr)[\s>/]/i.test(value);
   const dom = doc.createElement(lone ? "code" : block ? "div" : "span");

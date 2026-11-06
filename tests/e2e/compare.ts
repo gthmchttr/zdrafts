@@ -3,7 +3,7 @@
 //
 // Three captures of one page:
 // - `served`: the editing page as the sandbox serves it (the chrome build, src/zola/chrome.ts), with
-//   the markers where the content goes;
+//   the markers where the content goes (src/zola/markers.ts);
 // - `editor`: the editor's content (the ProseMirror element's innerHTML) once it has rendered;
 // - `view`: the view page as served (Zola's real output).
 //
@@ -143,8 +143,26 @@ function children(node: Node, editor: boolean, pre: boolean): Item[] {
     .filter((entry) => entry !== "");
 }
 
+/**
+ * A stylesheet's rules, each selector's declarations in one order and form: Zola's minify_html
+ * compacts CSS (and may reorder declarations), which renders the same
+ */
+function css(text: string): string {
+  return [...text.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map(([, selector, body]) => {
+      const declarations = body
+        .split(";")
+        .map((declaration) => declaration.trim().replace(/\s*:\s*/, ":").replace(/\s+/g, " "))
+        .filter(Boolean)
+        .sort();
+      return `${selector.trim().replace(/\s+/g, " ")}{${declarations.join(";")}}`;
+    })
+    .join("");
+}
+
 function item(element: Element, editor: boolean, pre: boolean): Item {
   const tag = element.tagName.toLowerCase();
+  if (tag === "style") return { tag, attrs: attributes(element, editor), children: [css(element.textContent ?? "")] };
   return nested({ tag, attrs: attributes(element, editor), children: children(element, editor, pre || tag === "pre" || tag === "textarea") });
 }
 
@@ -216,15 +234,10 @@ const shows = (node: Node) =>
   (node.nodeType === ELEMENT && !["SCRIPT", "NOSCRIPT"].includes((node as Element).tagName)) || (node.nodeType === TEXT && !!node.textContent!.trim());
 
 /** Where the content goes in the editing page: its parent's path, and how many shown nodes come before and after it */
-function contentPlace(doc: Document): { path: number[]; before: number; after: number; start: Comment; end: Comment } {
-  const walker = doc.createTreeWalker(doc.body, 128 /* comments */);
-  let start: Comment | null = null;
-  let end: Comment | null = null;
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const data = (node as Comment).data;
-    if (data.includes("zdrafts:content:")) start = node as Comment;
-    else if (data.includes("zdrafts:end:")) end = node as Comment;
-  }
+function contentPlace(doc: Document): { path: number[]; before: number; after: number; start: Element; end: Element } {
+  // The markers (src/zola/markers.ts)
+  const start = doc.querySelector("zdrafts-start");
+  const end = doc.querySelector("zdrafts-end");
   if (!start || !end || start.parentNode !== end.parentNode) throw new Error("The editing page has no content markers");
   const parent = start.parentNode!;
   const path: number[] = [];

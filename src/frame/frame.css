@@ -73,9 +73,11 @@ pre.zd-tera-block { padding: .5em .75em; white-space: pre-wrap; }
    without the wrapper), and the editable code over it, transparent so the highlighted text shows
    through (src/frame/codeblock.ts) */
 .zd-code { position: relative; }
-.zd-code:not(.zd-code-stale) > pre.zd-code-edit { position: absolute; inset: 0; margin: 0; z-index: 1; overflow: auto; }
-.zd-code:not(.zd-code-stale) > pre.zd-code-edit,
-.zd-code:not(.zd-code-stale) > pre.zd-code-edit * { color: transparent !important; background: transparent !important; border-color: transparent !important; box-shadow: none !important; }
+.zd-code:not(.zd-code-stale):not(.zd-code-changed) > pre.zd-code-edit { position: absolute; inset: 0; margin: 0; z-index: 1; overflow: auto; }
+.zd-code:not(.zd-code-stale):not(.zd-code-changed) > pre.zd-code-edit,
+.zd-code:not(.zd-code-stale):not(.zd-code-changed) > pre.zd-code-edit * { color: transparent !important; background: transparent !important; border-color: transparent !important; box-shadow: none !important; }
 .zd-code > pre:not(.zd-code-edit) { pointer-events: none; }
+/* Tera changed the code (it isn't in {% raw %}): Zola's result, and the code as written under it */
+.zd-code.zd-code-changed > pre.zd-code-edit { margin-top: .5em; }
 /* Not highlighted for the code as it is now (or not yet): the editable code takes Zola's place */
 .zd-code.zd-code-stale > pre:not(.zd-code-edit) { display: none; }

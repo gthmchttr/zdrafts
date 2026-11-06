@@ -16,7 +16,8 @@ export default defineConfig({
   workers: 1,
   timeout: 15 * 60_000,
   reporter: [["list"]],
-  use: { baseURL: `http://localhost:${PORT}`, viewport: { width: 1300, height: 900 } },
+  // A click that can't happen fails instead of waiting for the test's timeout
+  use: { baseURL: `http://localhost:${PORT}`, viewport: { width: 1300, height: 900 }, actionTimeout: 30_000, navigationTimeout: 60_000 },
   projects: browsers.map((name) => ({ name, use: { ...DEVICES[name], viewport: { width: 1300, height: 900 } } })),
   webServer: {
     command: `npx vite --port ${PORT} --strictPort`,

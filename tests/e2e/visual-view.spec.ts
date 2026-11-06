@@ -9,6 +9,14 @@ import { CATALOG } from "../../src/themes/catalog.ts";
 import { compare, type Difference } from "./compare.ts";
 import { mockGitHub } from "./github.ts";
 
+/**
+ * A call into a frame, given up after `ms`: one being replaced (a rebuild reloads it) can leave it
+ * waiting for good
+ */
+function within<T, F = null>(promise: Promise<T>, ms = 10_000, fallback: F = null as F): Promise<T | F> {
+  return Promise.race([promise.catch(() => fallback), new Promise<F>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
+
 /** Poll `probe` every half second until it gives the same value three times in a row */
 async function settled<T>(page: Page, probe: () => Promise<T | null>, what: string, tries = 240): Promise<T> {
   let last: string | null = null;
@@ -32,7 +40,7 @@ async function editor(page: Page, path: string): Promise<{ frame: Frame; html: s
     async () => {
       const frame = page.frames().find((candidate) => candidate.url().includes(`zdrafts-edit=${encodeURIComponent(path)}`));
       if (!frame) return null;
-      const html = await frame.evaluate(() => document.querySelector(".zd-root .ProseMirror")?.innerHTML ?? null);
+      const html = await within(frame.evaluate(() => document.querySelector(".zd-root .ProseMirror")?.innerHTML ?? null));
       return html === null ? null : { frame, html };
     },
     `The editor for ${path}`,
@@ -64,6 +72,12 @@ for (const theme of CATALOG) {
 
     for (const path of pages) {
       await test.step(path, async () => {
+        // Its folders open (the explorer may have redrawn them closed)
+        const parts = path.split("/");
+        for (let depth = 1; depth < parts.length; depth++) {
+          const folder = page.locator(`[role="treeitem"][data-path="${parts.slice(0, depth).join("/")}"][aria-expanded="false"]`);
+          if (await folder.count()) await folder.click();
+        }
         await page.locator(`[role="treeitem"][data-path="${path}"]`).click();
         const visualButton = page.getByRole("button", { name: "Visual", exact: true });
         // A page whose template doesn't show its content is only edited as Markdown
@@ -72,17 +86,23 @@ for (const theme of CATALOG) {
         const { frame, html } = await editor(page, path);
         const sandbox = new URL(frame.url()).origin;
         // And it can be edited: the editor read all of it
-        const notice = await frame.evaluate(() => document.querySelector(".zd-error")?.textContent ?? (document.querySelector(".zd-root .ProseMirror")?.getAttribute("contenteditable") === "true" ? null : "not editable"));
+        const notice = await within(
+          frame.evaluate(() => document.querySelector(".zd-error")?.textContent ?? (document.querySelector(".zd-root .ProseMirror")?.getAttribute("contenteditable") === "true" ? null : "not editable")),
+          10_000,
+          "its editor couldn't be reached",
+        );
         expect.soft(notice, `${path} can't be edited`).toBeNull();
-        const served = await frame.evaluate(() => fetch(location.href).then((response) => response.text()));
+        const served = await within(frame.evaluate(() => fetch(location.href).then((response) => response.text())), 30_000);
+        if (served === null) throw new Error(`The editing page of ${path} couldn't be read`);
 
         await page.getByRole("button", { name: "View", exact: true }).click();
         const view = await settled(
           page,
           async () => {
             const viewFrame = page.frames().find((candidate) => new URL(candidate.url()).pathname.startsWith("/view/"));
-            if (!viewFrame || (await viewFrame.evaluate(() => document.readyState)) !== "complete") return null;
-            return viewFrame.evaluate(() => fetch(location.href).then((response) => response.text()));
+            // (Its HTML as served: not waiting for what the page loads)
+            if (!viewFrame) return null;
+            return within(viewFrame.evaluate(() => fetch(location.href).then((response) => response.text())));
           },
           `The view of ${path}`,
         );

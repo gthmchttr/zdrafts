@@ -9,7 +9,7 @@ import { dirname, join, relative } from "node:path";
 import { JSDOM } from "jsdom";
 import { describe, expect, test } from "vitest";
 import { prepareSite } from "../src/site/newsite.ts";
-import { chromeOverrides, findPages, previewConfig } from "../src/zola/chrome.ts";
+import { chromeOverrides, findPages } from "../src/zola/chrome.ts";
 import { defaultArgs, indexComponents, isTemplateOnly } from "../src/zola/components.ts";
 import { parseProbe, probePage, type ProbeCall } from "../src/zola/probe.ts";
 import { probeContext } from "../src/zola/probecontext.ts";
@@ -58,11 +58,8 @@ describe.skipIf(!THEMES_DIR)("theme survey", () => {
         }
         const site = prepared.files;
         // Preview builds, as zdrafts does them
-        const config = [...site.keys()].includes("zola.toml") ? "zola.toml" : "config.toml";
-        const preview = previewConfig(decoder.decode(site.get(config)));
         const build = (overrides: Map<string, Uint8Array | null> = new Map()) => {
           const files = new Map(site);
-          if (preview !== null) files.set(config, encoder.encode(preview));
           for (const [path, data] of overrides) data === null ? files.delete(path) : files.set(path, data);
           return zola.build({ files, baseUrl, drafts: true });
         };

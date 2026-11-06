@@ -24,7 +24,7 @@ import { headingIds, zolaHeadings, zolaImages, zolaLinks } from "./rendering.ts"
 import { standaloneComponents, zolaListItems, zolaParagraphs, zolaTables } from "./blocks.ts";
 import { definitionLists, remarkDefinitionListPlugin } from "./deflist.ts";
 import { zolaFootnotes } from "./footnotes.ts";
-import { linkDefinitionSchema, remarkLinkDefinitionsPlugin, replacedPlugin } from "./linkdefs.ts";
+import { linkDefinitionSchema, remarkLinkDefinitionsPlugin, remarkNoLiteralLinksPlugin, replacedPlugin } from "./linkdefs.ts";
 import { definitionListHandlers } from "../markdown/deflist.ts";
 import type { RenderInfo } from "../markdown/zola-render.ts";
 import type { FrameToShell, ShellToFrame } from "./protocol.ts";
@@ -49,10 +49,18 @@ const image = imageSchema.extendSchema((schema) => (ctx) => {
 });
 
 /**
- * `headings`: the ids Zola gave the page's headings in the page as served (src/frame/main.ts)
+ * `served`: what the page as served says about its headings: the ids Zola gave them, its anchor
+ * links (src/frame/main.ts)
  */
-export async function createEditor(root: HTMLElement, message: DocMessage, headings: RenderInfo["headings"], post: (message: FrameToShell) => void, probes: Probes, assets: Assets) {
-  const render: RenderInfo = { ...message.render, headings };
+export async function createEditor(
+  root: HTMLElement,
+  message: DocMessage,
+  served: Pick<RenderInfo, "headings" | "anchor">,
+  post: (message: FrameToShell) => void,
+  probes: Probes,
+  assets: Assets,
+) {
+  const render: RenderInfo = { ...message.render, ...served };
   const doc = root.ownerDocument;
   const components = new Map<string, ComponentInfo>(message.components.map((c) => [c.name, c]));
   const overlay = new Overlay(doc);
@@ -115,9 +123,11 @@ export async function createEditor(root: HTMLElement, message: DocMessage, headi
     // Link definitions are kept (remarkLinkDefinitionsPlugin), not deleted
     .use(commonmark.filter((plugin) => plugin !== syncHeadingIdPlugin && !(replacedPlugin as unknown[]).includes(plugin)))
     .use([remarkLinkDefinitionsPlugin, linkDefinitionSchema].flat())
+    // Bare URLs aren't links in Zola
+    .use(remarkNoLiteralLinksPlugin)
     .use(zolaImages(image, render))
     .use(zolaLinks(render))
-    .use(zolaHeadings())
+    .use(zolaHeadings(render))
     .use(headingIds(render))
     .use(codeBlockWithMeta)
     .use(gfm)

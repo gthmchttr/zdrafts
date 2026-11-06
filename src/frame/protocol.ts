@@ -28,7 +28,7 @@ export type ShellToFrame =
       staticImages: string[];
       siteUrl: string;
       /** How Zola renders the page's links and headings (the frame adds the headings' ids it finds) */
-      render: Omit<RenderInfo, "headings">;
+      render: Omit<RenderInfo, "headings" | "anchor">;
     }
   | { type: "probe-result"; id: number; results: [string, ProbeResult][] }
   /** The added file's URL on the site ("/images/a.png") */

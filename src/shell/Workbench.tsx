@@ -683,7 +683,9 @@ function EditorBody({ session, path, mode, onNavigate }: { session: Session; pat
       <>
         {!url && (
           <div className="panel-note" style={{ borderTop: 0, borderBottom: "1px solid var(--border)" }}>
-            This page's template doesn't display its content, so it can only be edited as Markdown.
+            {splitFrontMatter(session.text(path)).body.trim()
+              ? "This page's template doesn't display its content, so it can only be edited as Markdown."
+              : "This page has no content yet. Write some here; once it has some, it can be edited in Visual too."}
           </div>
         )}
         <CodeEditor key={path} value={session.text(path)} language="markdown" label={`Markdown of ${path}`} onChange={(text) => saveText(path, text)} />

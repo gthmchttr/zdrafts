@@ -11,7 +11,20 @@ import type { EditorEnv } from "./nodes.ts";
 /** The fence's info string: the language and, after it, Zola's options (linenos, hl_lines=…) */
 const infoString = (node: ProseNode) => [node.attrs.language, node.attrs.meta].filter(Boolean).join(" ");
 
-const codeCall = (node: ProseNode): ProbeCall => ({ kind: "code", name: infoString(node), args: node.textContent });
+const isRawTag = (node: ProseNode, tag: "raw" | "endraw") => (node.type.name === "zola_tera_block" || node.type.name === "zola_atom") && new RegExp(`^\\{%-?\\s*${tag}\\b`).test(String(node.attrs.raw ?? "").trim());
+
+/** Whether the code block at `pos` is between {% raw %} and {% endraw %} in the page */
+function inRaw(doc: ProseNode, pos: number): boolean {
+  let raw = false;
+  doc.nodesBetween(0, pos, (node) => {
+    if (isRawTag(node, "raw")) raw = true;
+    else if (isRawTag(node, "endraw")) raw = false;
+    return true;
+  });
+  return raw;
+}
+
+const codeCall = (node: ProseNode, raw: boolean): ProbeCall => ({ kind: "code", name: infoString(node), args: node.textContent, raw });
 
 /**
  * Code blocks keep the whole info string: Milkdown keeps only the language, which would drop
@@ -53,6 +66,13 @@ function highlighted(doc: Document, result: ProbeResult | undefined, text: strin
   return copy.textContent!.replace(/\n$/, "") === text.replace(/\n$/, "") ? (pre as HTMLElement) : null;
 }
 
+/** The <pre> in Zola's HTML for a block */
+function zolaPre(doc: Document, result: ProbeResult): HTMLElement | null {
+  const template = doc.createElement("template");
+  template.innerHTML = result.html;
+  return template.content.querySelector("pre");
+}
+
 /** Zola's <pre> look from the last highlighted block, for blocks not highlighted yet */
 let lastPre: HTMLElement | null = null;
 
@@ -70,6 +90,8 @@ class CodeBlockView implements NodeView {
 
   constructor(
     private node: ProseNode,
+    private view: EditorView,
+    private getPos: () => number | undefined,
     private env: EditorEnv,
   ) {
     const { doc } = env;
@@ -87,9 +109,14 @@ class CodeBlockView implements NodeView {
   }
 
   private render() {
-    const result = this.env.probes.peek(codeCall(this.node));
-    const pre = highlighted(this.env.doc, result, this.node.textContent);
-    if (pre) lastPre = pre;
+    const call = codeCall(this.node, inRaw(this.view.state.doc, this.getPos() ?? 0));
+    const result = this.env.probes.peek(call);
+    const exact = highlighted(this.env.doc, result, this.node.textContent);
+    // Not in raw in the page: Tera ran on the code, and Zola shows what it made of it. That's shown,
+    // with the code as written under it to edit
+    const changed = !exact && !call.raw && result?.html && !result.error ? zolaPre(this.env.doc, result) : null;
+    const pre = exact ?? changed;
+    if (exact) lastPre = exact;
     if (pre && result !== this.showing) {
       this.showing = result;
       this.shown?.remove();
@@ -106,6 +133,7 @@ class CodeBlockView implements NodeView {
     for (const [name, value] of look ? [...look.attributes].map((a) => [a.name, a.value]) : []) if (name !== "id" && name !== "aria-hidden" && name !== "contenteditable") this.edit.setAttribute(name, value);
     this.edit.classList.add("zd-editing", "zd-code-edit");
     this.dom.classList.toggle("zd-code-stale", !pre);
+    this.dom.classList.toggle("zd-code-changed", !!changed);
     if (this.node.attrs.language) this.contentDOM.dataset.lang = this.node.attrs.language;
     else delete this.contentDOM.dataset.lang;
     requestAnimationFrame(() => this.align());
@@ -161,9 +189,9 @@ export function codeBlocks(env: EditorEnv) {
         view(view) {
           let timer: ReturnType<typeof setTimeout> | undefined;
           const request = (v: EditorView) =>
-            v.state.doc.descendants((node) => {
+            v.state.doc.descendants((node, pos) => {
               if (node.type.name !== "code_block") return true;
-              env.probes.get(codeCall(node));
+              env.probes.get(codeCall(node, inRaw(v.state.doc, pos)));
               return false;
             });
           request(view);
@@ -179,6 +207,6 @@ export function codeBlocks(env: EditorEnv) {
       }),
   );
 
-  const view = $view(codeBlockSchema.node, () => (node) => new CodeBlockView(node, env));
+  const view = $view(codeBlockSchema.node, () => (node, view, getPos) => new CodeBlockView(node, view, getPos, env));
   return [plugin, view];
 }

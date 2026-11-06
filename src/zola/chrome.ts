@@ -7,13 +7,7 @@
 // Each marker names its content file, so the output also tells us where Zola put every page
 // (slugs, `path` overrides and dates included) without re-implementing its rules.
 import { splitFrontMatter } from "../markdown/frontmatter.ts";
-import { setTomlKey } from "../site/newsite.ts";
-import { endData, START_MARKER, startData } from "./markers.ts";
-
-export const contentMarker = (contentPath: string) => `<!--${startData(contentPath)}-->`;
-
-/** Where the stand-in content ends: the editor replaces everything from the marker to here */
-export const contentEndMarker = (contentPath: string) => `<!--${endData(contentPath)}-->`;
+import { endMarker, markerPath, START_MARKER, startMarker } from "./markers.ts";
 
 const segmenter = new Intl.Segmenter("en", { granularity: "word" });
 
@@ -74,13 +68,19 @@ export function chromeOverrides(contentPages: string[], text: (path: string) => 
   const overrides = new Map<string, Uint8Array>();
   for (const path of contentPages) {
     const { frontMatter, body } = splitFrontMatter(text(path));
+    // Nothing in it: Zola renders it as it is (a theme may leave out the content's wrapper), and it's
+    // written in the Source view until it has content
+    if (!body.trim()) {
+      overrides.set(path, encoder.encode(frontMatter));
+      continue;
+    }
     const separator = frontMatter && !frontMatter.endsWith("\n") ? "\n" : "";
-    const headings = headingLines(body);
     const language = lang(path);
-    const pad = filler(wordCount(body, language) - wordCount(headings.join("\n\n"), language), language);
-    const lines = [...headings, ...(pad ? [pad] : [])];
-    const inner = lines.length ? `\n\n${lines.join("\n\n")}\n\n` : "\n";
-    overrides.set(path, encoder.encode(`${frontMatter}${separator}\n${contentMarker(path)}${inner}${contentEndMarker(path)}\n`));
+    const parts = [startMarker(path), ...headingLines(body), endMarker(path)];
+    // As many words as Zola counts in the real body, markers included
+    const pad = filler(wordCount(body, language) - wordCount(parts.join("\n\n"), language), language);
+    if (pad) parts.splice(-1, 0, pad);
+    overrides.set(path, encoder.encode(`${frontMatter}${separator}\n${parts.join("\n\n")}\n`));
   }
   return overrides;
 }
@@ -92,21 +92,11 @@ export function findPages(output: Map<string, Uint8Array>): Map<string, string> 
   const best = new Map<string, { path: string; markers: number }>();
   for (const [path, data] of output) {
     if (!path.endsWith(".html")) continue;
-    const found = [...decoder.decode(data).matchAll(START_MARKER)].map((match) => match[1]);
+    const found = [...decoder.decode(data).matchAll(START_MARKER)].map(markerPath);
     for (const content of found) {
       const current = best.get(content);
       if (!current || found.length < current.markers) best.set(content, { path, markers: found.length });
     }
   }
   return new Map([...best].map(([content, { path }]) => [content, path]));
-}
-
-/**
- * The site's config for preview builds, if it needs changes: minifying HTML would strip the content
- * markers (HTML comments), so it's turned off. Returns null when the config can be used as it is.
- */
-export function previewConfig(config: string): string | null {
-  const header = config.search(/^[ \t]*\[/m);
-  const top = header < 0 ? config : config.slice(0, header);
-  return /^[ \t]*minify_html[ \t]*=[ \t]*true\b/m.test(top) ? setTomlKey(config, "minify_html", false) : null;
 }

@@ -36,5 +36,6 @@ export default defineConfig({
       },
     },
   },
-  test: { environment: "node", include: ["tests/**/*.test.ts"] },
+  // (Fixtures are other projects: theirs aren't ours to run)
+  test: { environment: "node", include: ["tests/**/*.test.ts"], exclude: ["tests/fixtures/**", "node_modules/**"] },
 });

@@ -11,6 +11,7 @@
 //          component whose body the theme transforms (name "block"), Tera in a sentence ("inline")
 import { inlineTag, openTag } from "../markdown/remark-zola.ts";
 import { setStringAttr } from "../markdown/tera.ts";
+import { SLOT, SLOT_MARKER } from "./markers.ts";
 
 export type ProbeKind = "block" | "text" | "atom" | "code" | "source";
 
@@ -18,6 +19,8 @@ export interface ProbeCall {
   kind: ProbeKind;
   name: string;
   args: string;
+  /** "code": the block is in {% raw %} in the page, so Tera leaves it as it is */
+  raw?: boolean;
 }
 
 export interface ProbeResult {
@@ -30,10 +33,10 @@ export interface ProbeResult {
   error?: string;
 }
 
-export const SLOT_COMMENT = "zdrafts:slot";
+
 export const textSlot = (n: number) => `zdrafts-slot-${n}`;
 
-export const probeKey = (call: ProbeCall) => `${call.kind}\u0000${call.name}\u0000${call.args}`;
+export const probeKey = (call: ProbeCall) => `${call.kind}\u0000${call.name}\u0000${call.args}${call.raw ? "\u0000raw" : ""}`;
 
 /** The probe page's Markdown: `frontMatter` sets how it renders (see probecontext.ts) */
 export function probePage(calls: ProbeCall[], frontMatter = '+++\ntitle = "zdrafts probe"\n+++\n'): string {
@@ -42,14 +45,14 @@ export function probePage(calls: ProbeCall[], frontMatter = '+++\ntitle = "zdraf
       // A fence longer than any run of backticks in the code
       const longest = Math.max(2, ...[...call.args.matchAll(/`+/g)].map((m) => m[0].length));
       const fence = "`".repeat(longest + 1);
-      // Zola renders a page's Tera before its Markdown, code included: in raw, code that looks like
-      // Tera ({% <note> %} in an example) is highlighted as it's written, as pages write it
+      // Zola renders a page's Tera before its Markdown, code included: a block the page has in
+      // {% raw %} is highlighted as it's written; one it hasn't, after Tera
       const code = `${fence}${call.name}\n${call.args}\n${fence}`;
-      const raw = call.args.includes("endraw") ? code : `{% raw %}\n${code}\n{% endraw %}`;
+      const raw = call.raw && !call.args.includes("endraw") ? `{% raw %}\n${code}\n{% endraw %}` : code;
       return `<div data-zdrafts-probe="${n}">\n\n${raw}\n\n</div>`;
     }
     if (call.kind === "block") {
-      return `<div data-zdrafts-probe="${n}">\n\n${openTag(call.name, call.args)}<!--${SLOT_COMMENT}-->{% </${call.name}> %}\n\n</div>`;
+      return `<div data-zdrafts-probe="${n}">\n\n${openTag(call.name, call.args)}${SLOT_MARKER}{% </${call.name}> %}\n\n</div>`;
     }
     if (call.kind === "source") {
       // Inline: in the HTML block, so Markdown doesn't make a paragraph of it
@@ -69,7 +72,7 @@ export function parseProbe(html: string, calls: ProbeCall[]): ProbeResult[] {
     const element = doc.querySelector(`[data-zdrafts-probe="${n}"]`);
     if (!element) return { html: "", slot: false, error: "The theme didn't render this component" };
     const inner = element.innerHTML.trim();
-    if (call.kind === "block") return { html: inner, slot: inner.includes(`<!--${SLOT_COMMENT}-->`) };
+    if (call.kind === "block") return { html: inner, slot: !!element.querySelector(SLOT) };
     if (call.kind === "text") return { html: inner, slot: inner.includes(textSlot(n)), marker: textSlot(n) };
     return { html: inner, slot: false };
   });

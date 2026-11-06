@@ -34,6 +34,12 @@ function tree(dir: string, sha: string) {
 const CORS = { "access-control-allow-origin": "*", "access-control-expose-headers": "etag" };
 
 export async function mockGitHub(context: BrowserContext) {
+  // Nothing from other sites (themes' fonts and scripts from CDNs): tests don't depend on the
+  // network, and the pages they compare are served from here
+  await context.route(
+    (url) => !["localhost", "127.0.0.1", "api.github.com", "raw.githubusercontent.com"].includes(url.hostname),
+    (route) => route.abort(),
+  );
   // Chromium under Playwright doesn't route URLs ending in favicon.ico: a query makes them routable
   await context.addInitScript(() => {
     const original = window.fetch;

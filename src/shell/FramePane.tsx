@@ -35,6 +35,7 @@ export function FramePane({
           if (message.path !== path) return;
           setLoading(false);
           const theme = session.theme;
+          const render = await session.renderInfoWithLinks(path);
           send({
             type: "doc",
             path,
@@ -43,7 +44,7 @@ export function FramePane({
             theme: { editCss: theme.editCss, hiddenComponents: theme.hiddenComponents, componentHints: theme.componentHints },
             staticImages: session.staticImages(),
             siteUrl: session.baseUrl,
-            render: session.renderInfo(path),
+            render,
           });
           break;
         }

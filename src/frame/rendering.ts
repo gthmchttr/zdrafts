@@ -7,6 +7,7 @@ import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
 import { headingAttributes, imageAttributes, linkAttributes, slugifyAnchor, uniqueAnchor, type RenderInfo } from "../markdown/zola-render.ts";
+import { ANCHOR_ID } from "./anchors.ts";
 
 export function zolaLinks(info: RenderInfo) {
   return linkSchema.extendSchema((schema) => (ctx) => ({
@@ -23,12 +24,32 @@ export function zolaImages(image: typeof imageSchema, info: RenderInfo) {
   }));
 }
 
-export function zolaHeadings() {
+/** Headings with Zola's id, classes from their {.class} block, and the theme's anchor link */
+export function zolaHeadings(info: RenderInfo) {
   return headingSchema.extendSchema((schema) => (ctx) => ({
     ...schema(ctx),
+    // anchor: whether Zola gives it the anchor link (the page's own headings, not components'; set by headingIds)
+    attrs: { ...schema(ctx).attrs, anchor: { default: true } },
     toDOM: (node) => {
       const classes = headingAttributes(node.textContent)?.classes ?? [];
-      return [`h${node.attrs.level}`, { id: node.attrs.id, ...(classes.length ? { class: classes.join(" ") } : {}) }, 0];
+      const attrs = { id: node.attrs.id, ...(classes.length ? { class: classes.join(" ") } : {}) };
+      const anchor = info.anchor;
+      if (!anchor || !node.attrs.id || !node.attrs.anchor) return [`h${node.attrs.level}`, attrs, 0];
+      const heading = document.createElement(`h${node.attrs.level}`);
+      for (const [name, value] of Object.entries(attrs)) heading.setAttribute(name, value);
+      const template = document.createElement("template");
+      template.innerHTML = anchor.html;
+      const link = template.content.firstElementChild!;
+      for (const attribute of [...link.attributes]) link.setAttribute(attribute.name, attribute.value.replaceAll(ANCHOR_ID, node.attrs.id));
+      if (anchor.mode === "heading") {
+        heading.append(link);
+        return { dom: heading, contentDOM: link };
+      }
+      link.setAttribute("contenteditable", "false");
+      const content = document.createElement("span");
+      content.className = "zd-unwrap";
+      heading.append(...(anchor.mode === "left" ? [link, content] : [content, link]));
+      return { dom: heading, contentDOM: content };
     },
   }));
 }
@@ -48,7 +69,7 @@ const key = new PluginKey("zdrafts-heading-ids");
  */
 export function headingIds(info: RenderInfo) {
   const ids = (doc: ProseNode) => {
-    const found: { pos: number; id: string }[] = [];
+    const found: { pos: number; id: string; anchor: boolean }[] = [];
     const used = new Map<ProseNode, Set<string>>();
     let top = 0;
     doc.descendants((node, pos) => {
@@ -71,7 +92,8 @@ export function headingIds(info: RenderInfo) {
         id = zola && zola.text === text ? zola.id : uniqueAnchor(taken, slugifyAnchor(text, info.markdown.slugifyAnchors));
         taken.add(id);
       }
-      found.push({ pos, id });
+      // Components' bodies are rendered without anchors
+      found.push({ pos, id, anchor: scope === doc });
       return false;
     });
     return found;
@@ -80,10 +102,10 @@ export function headingIds(info: RenderInfo) {
     if (view.composing) return;
     const tr = view.state.tr.setMeta("addToHistory", false);
     let changed = false;
-    for (const { pos, id } of ids(view.state.doc)) {
+    for (const { pos, id, anchor } of ids(view.state.doc)) {
       const node = view.state.doc.nodeAt(pos)!;
-      if (node.attrs.id !== id) {
-        tr.setNodeMarkup(pos, undefined, { ...node.attrs, id });
+      if (node.attrs.id !== id || node.attrs.anchor !== anchor) {
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, id, anchor });
         changed = true;
       }
     }

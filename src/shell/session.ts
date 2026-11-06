@@ -9,7 +9,7 @@ import { parse as parseToml } from "smol-toml";
 import { inspectSite, SiteError, type SiteInfo } from "../repo/site.ts";
 import { getLocalSite, localRepo } from "../site/local.ts";
 import { findTheme, type ThemeAdapter } from "../themes/index.ts";
-import { chromeOverrides, findPages, previewConfig } from "../zola/chrome.ts";
+import { chromeOverrides, findPages } from "../zola/chrome.ts";
 import { newPageText, rewriteLinks, slugify } from "./files.ts";
 import { ZolaClient } from "../zola/client.ts";
 import type { BuildResult } from "../zola/protocol.ts";
@@ -202,7 +202,7 @@ export class Session {
   }
 
   /** How Zola renders `path`'s links and headings: its URL, every page's, the site's settings */
-  renderInfo(path: string): Omit<RenderInfo, "headings"> {
+  renderInfo(path: string): Omit<RenderInfo, "headings" | "anchor"> {
     const url = (output: string) => `${this.baseUrl}/${output.replace(/index\.html$/, "")}`;
     const output = this.pages.get(path);
     let config: Record<string, unknown> = {};
@@ -216,6 +216,23 @@ export class Session {
       pages: Object.fromEntries([...this.pages].map(([content, out]) => [content.slice("content/".length), url(out)])),
       markdown: markdownSettings(config),
     };
+  }
+
+  /**
+   * renderInfo, with the URLs of the pages `path` links to with @/ that the build didn't place
+   * (sections without content, pages their template doesn't show): Zola gives them (get_url)
+   */
+  async renderInfoWithLinks(path: string): Promise<Omit<RenderInfo, "headings" | "anchor">> {
+    const info = this.renderInfo(path);
+    const targets = [...new Set([...this.text(path).matchAll(/@\/([^\s)"'#>]+)/g)].map((match) => match[1]))].filter((target) => !info.pages[target]);
+    if (!targets.length) return info;
+    const calls = targets.map((target): ProbeCall => ({ kind: "source", name: "inline", args: `{{ get_url(path=${JSON.stringify(`@/${target}`)}) }}` }));
+    const results = await this.probe(calls, path);
+    targets.forEach((target, i) => {
+      const html = results.get(probeKey(calls[i]))?.html;
+      if (html) info.pages[target] = new DOMParser().parseFromString(html, "text/html").body.textContent!.trim();
+    });
+    return info;
   }
 
   /** A page's language, as Zola gives it: "post.fr.md" is French if the site has French, else the default */
@@ -329,11 +346,14 @@ export class Session {
 
   /** Save the body of a page from the editor, keeping its (possibly edited) front matter */
   async saveBody(path: string, body: string): Promise<void> {
+    const before = this.layoutOf(path);
     const { frontMatter } = splitFrontMatter(this.text(path));
     // The editor writes \n; a file with \r\n line endings keeps them
     if (this.text(path).includes("\r\n")) body = body.replace(/\r?\n/g, "\r\n");
     await this.drafts.save(path, joinFrontMatter(frontMatter, body), this.original(path));
     this.emit();
+    // All of it deleted (or written again): the page's place in the chrome build changes
+    if (this.layoutOf(path) !== before) this.scheduleRebuild();
   }
 
   /** Save a whole file (front matter, source or config edits); some changes need a rebuild */
@@ -353,7 +373,11 @@ export class Session {
 
   /** What of a file the chrome build uses: a page's front matter, or all of any other file */
   private layoutOf(path: string): string {
-    if (this.contentPages.includes(path)) return splitFrontMatter(this.text(path)).frontMatter;
+    // A page's front matter, and whether it has content (the chrome build has no marker without it)
+    if (this.contentPages.includes(path)) {
+      const { frontMatter, body } = splitFrontMatter(this.text(path));
+      return `${frontMatter}\u0000${!body.trim()}`;
+    }
     const data = this.bytes(path);
     return data ? `${data.length}:${decoder.decode(data.slice(0, 4096))}:${this.drafts.get(path) === undefined}` : "";
   }
@@ -423,8 +447,6 @@ export class Session {
     const overrides: Map<string, Uint8Array | null> = chromeOverrides(this.contentPages, (path) => this.text(path), (path) => this.language(path));
     // Edited config, added images…: everything else that has a draft
     for (const path of this.drafts.paths()) if (!overrides.has(path)) overrides.set(path, this.bytes(path) ?? null);
-    const config = previewConfig(this.text(this.site.configPath));
-    if (config !== null) overrides.set(this.site.configPath, encoder.encode(config));
     // One probe page per context, each rendering its calls
     const probing = [...this.probeCalls].filter(([, calls]) => calls.size);
     const probePaths: string[] = [];

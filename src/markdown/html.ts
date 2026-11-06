@@ -90,4 +90,5 @@ export function safeAttributes(attrs: string): [string, string][] {
 }
 
 /** Elements the editor won't create from page content */
-export const UNSAFE_TAGS = new Set(["script", "style", "iframe", "object", "embed", "frame", "frameset", "template", "noscript", "base", "meta", "link"]);
+// (Styles stay: a page's own <style> and stylesheets change how it looks, and run nothing)
+export const UNSAFE_TAGS = new Set(["script", "iframe", "object", "embed", "frame", "frameset", "template", "noscript", "base", "meta"]);

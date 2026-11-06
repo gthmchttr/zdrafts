@@ -26,4 +26,14 @@ export const CATALOG: CatalogTheme[] = [
     demo: "",
     screenshot: "",
   },
+  {
+    id: "apollo",
+    name: "apollo",
+    description: "Modern and minimalistic blog theme",
+    repo: "https://github.com/not-matthias/apollo",
+    commit: "31e30e27638aa68394d8625e5c49ad3b8310bf65",
+    license: "MIT",
+    demo: "https://not-matthias.github.io/apollo",
+    screenshot: "https://www.getzola.org/themes/apollo/screenshot.png",
+  },
 ];

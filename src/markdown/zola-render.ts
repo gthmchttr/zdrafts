@@ -13,6 +13,17 @@ export interface RenderInfo {
   markdown: MarkdownSettings;
   /** The ids Zola gave the page's own headings (not ones in components), in order, by their text */
   headings: { text: string; id: string }[];
+  /** The anchor Zola adds to headings (insert_anchor_links), if it adds one */
+  anchor: AnchorTemplate | null;
+}
+
+/**
+ * The markup of the theme's anchor link (anchor-link.html) with the heading's id as a placeholder:
+ * around the heading's text ("heading"), or before or after it
+ */
+export interface AnchorTemplate {
+  mode: "heading" | "left" | "right";
+  html: string;
 }
 
 export interface MarkdownSettings {

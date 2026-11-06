@@ -3,10 +3,12 @@
 import { remarkInlineLinkPlugin } from "@milkdown/kit/preset/commonmark";
 import { $nodeSchema, $remark } from "@milkdown/kit/utils";
 import { remarkLinkDefinitions } from "../markdown/linkdefs.ts";
+import { remarkNoLiteralLinks } from "../markdown/literal-links.ts";
 
 /** In place of Milkdown's remarkInlineLinkPlugin (filter that one out of commonmark) */
 export const replacedPlugin = remarkInlineLinkPlugin;
 export const remarkLinkDefinitionsPlugin = $remark("remarkLinkDefinitions", () => remarkLinkDefinitions);
+export const remarkNoLiteralLinksPlugin = $remark("remarkNoLiteralLinks", () => remarkNoLiteralLinks);
 
 export const linkDefinitionSchema = $nodeSchema("link_definition", () => ({
   group: "block",

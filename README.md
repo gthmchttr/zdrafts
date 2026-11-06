@@ -71,8 +71,8 @@ origins' scripts and requests, which narrows that but doesn't close it.
 Any Zola 0.23 site works, with any theme or none: zdrafts edits pages inside whatever markup the
 theme renders. What it does to make that general:
 
-- Preview builds turn off `minify_html` (it would strip the markers that show where page content
-  goes) and keep each page's headings, so the theme's table of contents is right.
+- Preview builds mark where page content goes with empty elements (which `minify_html` keeps) and
+  keep each page's headings, so the theme's table of contents is right.
 - Components the theme's templates call (and pages don't), or that need template context such as
   `page` or `config`, are left out of the `/` menu.
 - Collapsed `<details>` are opened while editing.
@@ -92,7 +92,7 @@ footnote where it's written, `{% raw %}` tags) is shown faintly and isn't part o
 ## New sites
 
 **Start a new site with a theme** on the start screen picks one of the themes in
-`src/themes/catalog.ts` (for now zola-yolk), at the commit they were tested at: every page of each
+`src/themes/catalog.ts` (zola-yolk and apollo, the most used theme on GitHub), at the commit they were tested at: every page of each
 theme's demo site renders in Visual exactly as Zola builds it (`tests/e2e/visual-view.spec.ts`). The new site has
 the theme under `themes/`, the theme's demo config and content (pages that can't build in a
 browser, e.g. ones that load data from the web, are left out), and a GitHub Pages workflow. It's
@@ -106,7 +106,7 @@ Early.
 | | Supported |
 | --- | --- |
 | Zola | 0.23.6 (from `ZOLA_VERSION` in the site's CI workflow, `netlify.toml` or `vercel.json`) |
-| Themes | Any; new sites from zola-yolk, every page of whose demo renders in Visual as built |
+| Themes | Any; new sites from zola-yolk or apollo, every page of whose demo renders in Visual as built |
 
 Try it with [gthmchttr/gthmchttr.com](https://github.com/gthmchttr/gthmchttr.com).
 
@@ -119,7 +119,9 @@ Known limitations:
 
 - Components that transform their body (zola-yolk's `render`: Mermaid, math) are edited as source
   next to a preview.
-- A section page whose template lists its pages without its own content is edited in the Source view.
+- A section page whose template lists its pages without its own content, and a page with no content
+  yet, are edited in the Source view.
+- A code block outside `{% raw %}` that Tera changes shows Zola's output with its source below it.
 - File contents come from `raw.githubusercontent.com` (public) or the API's blob endpoint
   (private repositories) and are cached in IndexedDB by blob SHA. In public repositories, files
   under `static/` that Zola only copies (scripts, styles, fonts, icons, media) aren't downloaded

@@ -7,7 +7,8 @@ import { $node, $prose, $remark, $view } from "@milkdown/kit/utils";
 import { remarkZola } from "../markdown/remark-zola.ts";
 import { getAttr, setStringAttr } from "../markdown/tera.ts";
 import type { ComponentInfo } from "../zola/components.ts";
-import { SLOT_COMMENT, type ProbeCall, type ProbeResult } from "../zola/probe.ts";
+import { SLOT } from "../zola/markers.ts";
+import type { ProbeCall, ProbeResult } from "../zola/probe.ts";
 import type { Probes } from "./probes.ts";
 
 export interface EditorEnv {
@@ -168,12 +169,6 @@ function singleRoot(frag: DocumentFragment): HTMLElement | null {
   return nodes.length === 1 && nodes[0].nodeType === Node.ELEMENT_NODE ? (nodes[0] as HTMLElement) : null;
 }
 
-function findComment(root: Node, data: string): Comment | null {
-  const walker = root.ownerDocument!.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) if ((node as Comment).data === data) return node as Comment;
-  return null;
-}
-
 function findText(root: Node, marker: string): Text | null {
   const walker = root.ownerDocument!.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) if (node.textContent!.includes(marker)) return node as Text;
@@ -307,11 +302,14 @@ class BlockView extends ComponentView {
   protected render() {
     const { doc } = this.env;
     const result = this.result;
-    if (result?.slot) {
+    // A body the theme puts in as it is (in a <pre>, a <code>…), not as Markdown: Zola's output is
+    // shown, and the body is edited as its source
+    const verbatim = (html: string) => !!fragment(doc, html).querySelector(`:is(pre, code, textarea, script) ${SLOT}`);
+    if (result?.slot && !verbatim(result.html)) {
       const frag = fragment(doc, result.html);
-      const comment = findComment(frag, SLOT_COMMENT)!;
+      const marker = frag.querySelector(SLOT)!;
       const slot = el(doc, "div", "zd-slot");
-      comment.replaceWith(slot);
+      marker.replaceWith(slot);
       const root = singleRoot(frag);
       if (root) this.dom = root;
       else {

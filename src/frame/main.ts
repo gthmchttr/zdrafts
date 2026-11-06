@@ -6,7 +6,9 @@ import { Assets } from "./assets.ts";
 import { createEditor } from "./editor.ts";
 import { Probes } from "./probes.ts";
 import { APP_ORIGIN } from "../origins.ts";
-import { endData, startData } from "../zola/markers.ts";
+import { END, START } from "../zola/markers.ts";
+import type { AnchorTemplate } from "../markdown/zola-render.ts";
+import { anchorTemplate, headingTextWithoutAnchor } from "./anchors.ts";
 import type { FrameToShell, ShellToFrame } from "./protocol.ts";
 import editorCss from "./frame.css?inline";
 
@@ -22,29 +24,28 @@ function addStyle(css: string) {
 
 /**
  * Swap the stand-in content Zola rendered (see src/zola/chrome.ts) for the editor's root: the
- * start marker, the headings after it and the end marker.
+ * start marker, the headings after it and the end marker (src/zola/markers.ts).
  */
-function mountPoint(): { root: HTMLElement; headings: { text: string; id: string }[] } | null {
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT);
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if ((node as Comment).data !== startData(path)) continue;
-    const root = document.createElement("div");
-    root.className = "zd-root";
-    const end = endData(path);
-    // The end marker is a sibling, unless the theme moved content around; then only the marker goes
-    let next = node.nextSibling;
-    const between: ChildNode[] = [];
-    while (next && !(next.nodeType === Node.COMMENT_NODE && (next as Comment).data === end)) {
-      between.push(next);
-      next = next.nextSibling;
-    }
-    // The headings Zola rendered in the stand-in content, with the ids it gave them
-    const headings = between.flatMap((child) => (child instanceof HTMLElement && /^H[1-6]$/.test(child.tagName) ? [{ text: child.textContent!.trim(), id: child.id }] : []));
-    if (next) [...between, next].forEach((child) => child.remove());
-    node.parentNode!.replaceChild(root, node);
-    return { root, headings };
+function mountPoint(): { root: HTMLElement; headings: { text: string; id: string }[]; anchor: AnchorTemplate | null } | null {
+  const marker = (tag: string) => [...document.querySelectorAll(tag)].find((element) => element.getAttribute("data-zdrafts-path") === path);
+  const start = marker(START);
+  if (!start) return null;
+  const end = marker(END);
+  const root = document.createElement("div");
+  root.className = "zd-root";
+  // The end marker is a sibling, unless the theme moved content around; then only the markers go
+  const between: ChildNode[] = [];
+  if (end && end.parentNode === start.parentNode) {
+    for (let next = start.nextSibling; next && next !== end; next = next.nextSibling) between.push(next);
   }
-  return null;
+  // The headings Zola rendered in the stand-in content: the ids it gave them, and its anchor links
+  const rendered = between.filter((child): child is HTMLElement => child instanceof HTMLElement && /^H[1-6]$/.test(child.tagName));
+  const withAnchor = [...rendered].sort((a, b) => b.id.length - a.id.length).map(anchorTemplate).find(Boolean) ?? null;
+  const headings = rendered.map((heading) => ({ text: headingTextWithoutAnchor(heading, withAnchor), id: heading.id }));
+  between.forEach((child) => child.remove());
+  end?.remove();
+  start.replaceWith(root);
+  return { root, headings, anchor: withAnchor };
 }
 
 async function main() {
@@ -82,7 +83,7 @@ async function main() {
     else if (message.type === "doc" && message.path === path && !started) {
       started = true;
       addStyle(message.theme.editCss);
-      createEditor(root, message, mount.headings, post, probes, assets).catch((error) => {
+      createEditor(root, message, { headings: mount.headings, anchor: mount.anchor }, post, probes, assets).catch((error) => {
         console.error(error);
         root.textContent = `zdrafts couldn't open this page: ${error}`;
       });
