@@ -29,8 +29,6 @@ export type LocalSummary = Omit<LocalSite, "files">;
 
 const store = typeof indexedDB === "undefined" ? undefined : createStore("zdrafts-sites", "sites");
 
-export const ZOLA_FOR_NEW_SITES = "0.23.6";
-
 export async function listLocalSites(): Promise<LocalSummary[]> {
   if (!store) return [];
   const all = await entries<string, LocalSite>(store);
@@ -59,10 +57,10 @@ export async function createLocalSite(theme: CatalogTheme, title: string, onProg
   keepStorage();
   const files = await downloadTheme(theme, onProgress);
   onProgress({ stage: "building" });
-  const zola = new ZolaClient(`v${ZOLA_FOR_NEW_SITES}`, new Map());
+  const zola = new ZolaClient(`v${theme.zola}`, new Map());
   try {
     await zola.whenReady();
-    const options = { themeName: theme.id, title, zolaVersion: ZOLA_FOR_NEW_SITES };
+    const options = { themeName: theme.id, title, zolaVersion: theme.zola };
     const prepared = await prepareSite(files, options, async (site) => zola.build(new Map(site), `${location.origin}/site`));
     if (prepared.error) throw new Error(`${theme.name} doesn't build here:\n${prepared.error}`);
     const site: LocalSite = {

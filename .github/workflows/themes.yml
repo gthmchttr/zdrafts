@@ -1,0 +1,100 @@
+# Weekly: each catalog theme whose commit hasn't been checked (the one zdrafts pins, or a newer one
+# on the theme's default branch) gets every page of its demo, and every component, checked in
+# Visual against View in Chrome, Firefox and Safari (tests/e2e/visual-view.spec.ts), one job each
+# in parallel. Nothing changed, nothing runs. The results go to the theme-status branch
+# (src/themes/status.ts), which the theme picker shows.
+name: Check themes
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      all:
+        description: Check every theme, changed or not
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: themes
+  cancel-in-progress: false
+jobs:
+  changed:
+    runs-on: ubuntu-latest
+    outputs:
+      themes: ${{ steps.find.outputs.themes }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Themes with commits not checked yet
+        id: find
+        run: |
+          git fetch -q --depth 1 origin theme-status && git show FETCH_HEAD:themes.json > status.json || true
+          node scripts/theme-status.ts changed status.json ${{ inputs.all && '--all' || '' }} >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+  check:
+    needs: changed
+    if: needs.changed.outputs.themes != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: ${{ fromJSON(needs.changed.outputs.themes) }}
+        browser: [chromium, firefox, webkit]
+    name: ${{ matrix.theme.name }} ${{ matrix.theme.commit }} (${{ matrix.browser }})
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run setup
+      - name: The theme at that commit
+        run: |
+          node scripts/theme-status.ts pin ${{ matrix.theme.id }} ${{ matrix.theme.commit }}
+          npm run fixtures
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Every page in Visual against View
+        id: test
+        continue-on-error: true
+        run: npx playwright test --grep "${{ matrix.theme.name }}: every page"
+        env:
+          E2E_BROWSERS: ${{ matrix.browser }}
+      - name: Result
+        run: |
+          mkdir -p results
+          echo '{"theme":"${{ matrix.theme.id }}","commit":"${{ matrix.theme.commit }}","browser":"${{ matrix.browser }}","result":"${{ steps.test.outcome == 'success' && 'passed' || 'failed' }}","run":"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' > results/result-${{ matrix.theme.id }}-${{ matrix.theme.commit }}-${{ matrix.browser }}.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: result-${{ matrix.theme.id }}-${{ matrix.theme.commit }}-${{ matrix.browser }}
+          path: results
+  record:
+    needs: [changed, check]
+    if: always() && needs.changed.outputs.themes != '[]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: result-*
+          path: results
+          merge-multiple: true
+      - name: Add them to the theme-status branch
+        run: |
+          if git fetch -q origin theme-status; then git worktree add status FETCH_HEAD; else git worktree add --orphan -b theme-status status; fi
+          node scripts/theme-status.ts record results status/themes.json
+          cd status
+          git add themes.json
+          git -c user.name="github-actions[bot]" -c user.email="41898283+github-actions[bot]@users.noreply.github.com" commit -q -m "Theme check $(date -u +%F)"
+          git push origin HEAD:theme-status

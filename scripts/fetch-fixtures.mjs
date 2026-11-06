@@ -1,15 +1,15 @@
 // Clone the sites the tests run against into tests/fixtures/ (gitignored), at pinned commits, and
-// the themes new sites can start from (src/themes/catalog.ts) into tests/fixtures/themes/, at the
+// the themes new sites can start from (src/themes/*.toml) into tests/fixtures/themes/, at the
 // commits the catalog gives: the end-to-end tests serve them in place of GitHub.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CATALOG } from "../src/themes/catalog.ts";
+import { THEMES } from "./themes.ts";
 
 const FIXTURES = [
   { name: "gthmchttr.com", repo: "https://github.com/gthmchttr/gthmchttr.com.git", commit: "6c6070cca7726a2a6c411cc2a0712b6de76dd163" },
-  ...CATALOG.map((theme) => ({ name: `themes/${theme.id}`, repo: `${theme.repo}.git`, commit: theme.commit })),
+  ...THEMES.map((theme) => ({ name: `themes/${theme.id}`, repo: `${theme.repo}.git`, commit: theme.commit })),
 ];
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "tests", "fixtures");

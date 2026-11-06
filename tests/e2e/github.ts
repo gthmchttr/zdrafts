@@ -1,15 +1,27 @@
 // GitHub as the app sees it, answered from fixture checkouts (npm run fixtures): the catalog's
-// themes at their commits. Tests then don't depend on GitHub, or its rate limit.
+// themes at their commits, with a page of the components their demo pages don't use
+// (components.ts). Tests then don't depend on GitHub, or its rate limit.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BrowserContext } from "@playwright/test";
-import { CATALOG } from "../../src/themes/catalog.ts";
+import { THEMES } from "../../scripts/themes.ts";
+import { COMPONENTS_PAGE, componentsPage, themeFiles } from "./components.ts";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 
 /** "owner/repo" → its checkout */
-const repositories = new Map(CATALOG.map((theme) => [new URL(theme.repo).pathname.slice(1).toLowerCase(), join(FIXTURES, "themes", theme.id)]));
+const repositories = new Map(THEMES.map((theme) => [new URL(theme.repo).pathname.slice(1).toLowerCase(), join(FIXTURES, "themes", theme.id)]));
+
+/** checkout → files added to it */
+const added = new Map(
+  THEMES.map((theme) => {
+    const dir = join(FIXTURES, "themes", theme.id);
+    const page = componentsPage(theme, themeFiles(dir));
+    return [dir, new Map(page ? [[COMPONENTS_PAGE, Buffer.from(page.markdown)]] : [])];
+  }),
+);
 
 const git = (dir: string, ...args: string[]) => execFileSync("git", ["-C", dir, ...args], { maxBuffer: 1 << 28 }).toString();
 
@@ -26,6 +38,10 @@ function tree(dir: string, sha: string) {
         const [mode, type, objectSha, size] = meta.split(/\s+/);
         return { path, mode, type, sha: objectSha, ...(type === "blob" ? { size: Number(size) } : {}) };
       });
+    for (const [path, data] of added.get(dir) ?? []) {
+      const blob = createHash("sha1").update(`blob ${data.length}\0`).update(data).digest("hex");
+      entries.push({ path, mode: "100644", type: "blob", sha: blob, size: data.length });
+    }
     trees.set(sha, { sha, tree: entries, truncated: false });
   }
   return trees.get(sha);
@@ -61,7 +77,7 @@ export async function mockGitHub(context: BrowserContext) {
     const [owner, repo, , ...path] = new URL(route.request().url()).pathname.slice(1).split("/").map(decodeURIComponent);
     const dir = repositories.get(`${owner}/${repo}`.toLowerCase());
     try {
-      return route.fulfill({ headers: CORS, body: readFileSync(join(dir!, ...path)) });
+      return route.fulfill({ headers: CORS, body: added.get(dir!)?.get(path.join("/")) ?? readFileSync(join(dir!, ...path)) });
     } catch {
       return route.fulfill({ status: 404, headers: CORS, body: "404" });
     }

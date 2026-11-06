@@ -109,7 +109,7 @@ export class Session {
     if (!site.zola) {
       throw new SiteError(`This site deploys with Zola ${site.declaredZola}; zdrafts currently supports Zola 0.23.`);
     }
-    const theme = findTheme(site.theme, repo.files);
+    const theme = findTheme(site.theme);
     // A local site's drafts go by its id; a repository's by name and branch
     const drafts = new DraftStore(repo.local ? repo.fullName : `${repo.owner}/${repo.repo}@${repo.ref}`);
     await drafts.load();

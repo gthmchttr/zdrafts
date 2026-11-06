@@ -30,15 +30,11 @@ jobs:
       # zola.wasm and zola-wasi.js from the zola-wasi release, checked against its SHA256SUMS
       - name: Download Zola (WASM)
         run: npm run setup
+      # zdrafts' own tests; the themes are checked in a browser weekly (themes.yml)
       - name: Test
         run: |
           npm run fixtures
           npm test
-      # Every page of each catalog theme's demo site renders in Visual as Zola builds it
-      - name: End-to-end tests
-        run: |
-          npx playwright install --with-deps chromium
-          npm run test:e2e
       # The site's pages run on a sandbox origin of their own (src/origins.ts), set with the
       # repository variables APP_ORIGIN and SANDBOX_ORIGIN; without them, on the app's origin
       - name: Build
@@ -46,6 +42,7 @@ jobs:
         env:
           VITE_APP_ORIGIN: ${{ vars.APP_ORIGIN }}
           VITE_SANDBOX_ORIGIN: ${{ vars.SANDBOX_ORIGIN }}
+          VITE_THEME_STATUS: https://raw.githubusercontent.com/${{ github.repository }}/theme-status/themes.json
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:

@@ -1,6 +1,7 @@
 // Starting a new site in the browser: pick a theme from the gallery, give the site a title.
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { CATALOG, type CatalogTheme } from "../themes/catalog.ts";
+import { BROWSERS, fetchStatus, type Browser, type ThemeCheck, type ThemeStatus } from "../themes/status.ts";
 
 const HOSTS: Record<string, string> = { "github.com": "GitHub", "codeberg.org": "Codeberg", "gitlab.com": "GitLab" };
 const hostOf = (repo: string) => {
@@ -14,6 +15,60 @@ function Shot({ theme, lazy }: { theme: CatalogTheme; lazy?: boolean }) {
   useEffect(() => setFailed(false), [theme.screenshot]);
   if (failed || !theme.screenshot) return <span className="ns-noshot" aria-hidden="true">{theme.name}</span>;
   return <img src={theme.screenshot} alt="" loading={lazy ? "lazy" : undefined} onError={() => setFailed(true)} />;
+}
+
+const day = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+function Browsers({ check }: { check: ThemeCheck }) {
+  return (
+    <ul className="ns-browsers">
+      {(Object.keys(BROWSERS) as Browser[]).map((browser) => {
+        const result = check.browsers[browser];
+        return (
+          <li key={browser} className={result ?? "unchecked"} title={result ? `${BROWSERS[browser]}: ${result}` : `${BROWSERS[browser]}: not checked`}>
+            <span className={`codicon codicon-${result === "passed" ? "pass" : result === "failed" ? "error" : "circle-large"}`} aria-hidden="true" />
+            {BROWSERS[browser]}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+const failedIn = (check: ThemeCheck) => (Object.keys(BROWSERS) as Browser[]).filter((browser) => check.browsers[browser] === "failed").map((browser) => BROWSERS[browser]);
+
+/** What the weekly check found of the theme's commit new sites use, and of a newer one */
+function Checks({ theme, checks }: { theme: CatalogTheme; checks: ThemeCheck[] | undefined }) {
+  const pinned = checks?.find((check) => check.commit === theme.commit);
+  const newer = checks?.[0] && checks[0].commit !== theme.commit && checks[0].checked >= (pinned?.checked ?? "") ? checks[0] : undefined;
+  return (
+    <section className="ns-checks" aria-label="Checks">
+      <h3>Checked in zdrafts</h3>
+      {pinned ? (
+        <>
+          <p>
+            Every demo page and component edited in Visual, compared with the built site, on {day(pinned.checked)}
+            {pinned.run && (
+              <>
+                {" "}
+                (<a href={pinned.run} target="_blank" rel="noreferrer">details</a>)
+              </>
+            )}
+            :
+          </p>
+          <Browsers check={pinned} />
+        </>
+      ) : (
+        <p>Not checked in a browser yet: its pages are checked weekly.</p>
+      )}
+      {newer && (
+        <p className="ns-note">
+          A newer version of {theme.name} ({newer.commit.slice(0, 7)}, {day(newer.checked)}){" "}
+          {failedIn(newer).length ? `fails in ${failedIn(newer).join(", ")}` : "passes too"}; new sites still get the version above.
+        </p>
+      )}
+    </section>
+  );
 }
 
 export function NewSite({
@@ -33,6 +88,8 @@ export function NewSite({
   const [query, setQuery] = useState("");
   const [chosen, setChosen] = useState<CatalogTheme | null>(null);
   const [title, setTitle] = useState("");
+  const [status, setStatus] = useState<ThemeStatus>({});
+  useEffect(() => void fetchStatus().then(setStatus), []);
   const titleInput = useRef<HTMLInputElement>(null);
   const themes = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -125,6 +182,7 @@ export function NewSite({
                 </li>
               )}
             </ul>
+            <Checks theme={chosen} checks={status[chosen.id]} />
             <label className="ns-field">
               <span>Site title</span>
               <input ref={titleInput} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="My site" disabled={busy} />

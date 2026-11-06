@@ -1,0 +1,137 @@
+# https://github.com/gauthamchettiar/zola-yolk, as used by gthmchttr.com (Zola 0.23 components)
+name = "zola-yolk"
+description = "A minimal, dark monospace Zola theme with search, Font Awesome icons, and a component-based template architecture."
+repo = "https://github.com/gauthamchettiar/zola-yolk"
+commit = "d6acdba59c06d9f9e0380d2b4e63d6ab6a78068f"
+license = "MIT"
+demo = ""
+screenshot = ""
+zola = "0.23.6"
+
+[edit]
+css = """/* Show content the theme hides responsively or behind interaction, so it can be edited */
+.only-mobile, .only-desktop { display: block !important; }
+.tabs .tabs-panels > * { display: block !important; }
+details:not([open]) > :not(summary) { display: block !important; }
+"""
+# Template building blocks (page lists, metadata), not for writing in a page
+hidden = ["meta", "tags", "toc", "toc_items", "series.show", "list.by_year", "list.items", "list.recents", "sections.resolve"]
+
+[components.border]
+description = "Framed block"
+icon = "symbol-namespace"
+keywords = ["box", "frame"]
+
+[components.align]
+description = "Align text"
+icon = "list-flat"
+
+[components.center]
+description = "Centered block"
+icon = "list-flat"
+
+[components.left]
+description = "Left-aligned block"
+icon = "list-flat"
+
+[components.right]
+description = "Right-aligned block"
+icon = "list-flat"
+
+[components.wide]
+description = "Wider than the text column"
+icon = "screen-full"
+
+[components.row]
+description = "Side-by-side columns"
+icon = "split-horizontal"
+keywords = ["columns"]
+
+[components.col]
+description = "One column in a row"
+icon = "layout-sidebar-left"
+
+[components.mobile]
+description = "Shown on small screens only"
+icon = "device-mobile"
+
+[components.desktop]
+description = "Shown on large screens only"
+icon = "device-desktop"
+
+[components.tabs]
+description = "Tabbed panels"
+icon = "multiple-windows"
+
+[components.render]
+description = "Mermaid diagram or math"
+icon = "graph"
+keywords = ["mermaid", "math", "katex"]
+
+[components.quote]
+description = "Attributed quotation"
+icon = "quote"
+
+[components.admonition]
+description = "Callout box"
+icon = "info"
+keywords = ["callout"]
+
+[components.note]
+description = "Note callout"
+icon = "note"
+keywords = ["callout"]
+
+[components.tip]
+description = "Tip callout"
+icon = "lightbulb"
+keywords = ["callout"]
+
+[components.info]
+description = "Info callout"
+icon = "info"
+keywords = ["callout"]
+
+[components.warning]
+description = "Warning callout"
+icon = "warning"
+keywords = ["callout"]
+
+[components.danger]
+description = "Danger callout"
+icon = "error"
+keywords = ["callout"]
+
+[components.expand]
+description = "Collapsible section"
+icon = "fold"
+keywords = ["details", "collapse"]
+
+[components.img]
+label = "img"
+description = "Responsive image"
+icon = "file-media"
+keywords = ["image", "picture"]
+
+[components.icon]
+description = "Font Awesome icon"
+icon = "smiley"
+
+[components.elink]
+description = "External link"
+icon = "link-external"
+keywords = ["link"]
+
+[components.mark]
+description = "Highlighted text"
+icon = "symbol-color"
+keywords = ["highlight"]
+
+[components.color]
+description = "Coloured text"
+icon = "symbol-color"
+keywords = ["colour"]
+
+[components.shimmer]
+description = "Animated text"
+icon = "sparkle"

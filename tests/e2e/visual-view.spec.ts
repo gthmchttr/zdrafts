@@ -1,12 +1,13 @@
 // Every page of each catalog theme's demo site (a new site made from the theme, as people make
-// them) must render in Visual exactly as Zola builds it (View), apart from what makes the editor
+// them), and a page of the components its demo pages don't use (components.ts), must render in Visual exactly as Zola builds it (View), apart from what makes the editor
 // editable: see compare.ts for what's compared. Run with `npm run test:e2e` after
 // `npm run fixtures`. E2E_CAPTURE=<dir> keeps each page's captures there, to look at.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Frame, type Page } from "@playwright/test";
-import { CATALOG } from "../../src/themes/catalog.ts";
+import { CATALOG } from "../../scripts/themes.ts";
 import { compare, type Difference } from "./compare.ts";
+import { COMPONENTS_PAGE, componentsPage, themeFiles } from "./components.ts";
 import { mockGitHub } from "./github.ts";
 
 /**
@@ -69,6 +70,9 @@ for (const theme of CATALOG) {
     }
     const pages = (await page.locator('[role="treeitem"][data-path^="content/"][data-path$=".md"]').evaluateAll((rows) => rows.map((row) => row.getAttribute("data-path")!))).sort();
     expect(pages.length).toBeGreaterThan(0);
+    // (Left out of the new site if it didn't build: a component needs an example in the theme's file)
+    const components = componentsPage(theme, themeFiles(join(import.meta.dirname, "..", "fixtures", "themes", theme.id)));
+    if (components) expect(pages, `${COMPONENTS_PAGE} (${components.names.join(", ")}) builds`).toContain(COMPONENTS_PAGE);
 
     for (const path of pages) {
       await test.step(path, async () => {

@@ -16,7 +16,7 @@
     "noEmit": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "tests", "vite.config.ts", "playwright.config.ts"],
+  "include": ["src", "tests", "scripts/themes.ts", "vite.config.ts", "playwright.config.ts"],
   // Fixtures are other projects (npm run fixtures)
   "exclude": ["tests/fixtures"]
 }

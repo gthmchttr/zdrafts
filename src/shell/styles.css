@@ -606,6 +606,16 @@ button { font: inherit; color: inherit; }
 .ns-links li { display: flex; align-items: center; gap: 7px; }
 .ns-links a { display: inline-flex; align-items: center; gap: 7px; color: var(--link, #3794ff); text-decoration: none; }
 .ns-links a:hover { text-decoration: underline; }
+.ns-checks { margin: 0 0 20px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.ns-checks h3 { margin: 0 0 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--faint); }
+.ns-checks p { margin: 0 0 6px; }
+.ns-checks .ns-note { margin: 8px 0 0; }
+.ns-checks a { color: var(--link, #3794ff); }
+.ns-browsers { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.ns-browsers li { display: inline-flex; align-items: center; gap: 5px; }
+.ns-browsers .passed .codicon { color: #73c991; }
+.ns-browsers .failed .codicon { color: #f48771; }
+.ns-browsers .unchecked .codicon { color: var(--faint); }
 .ns-field { display: grid; gap: 6px; color: var(--muted); font-size: 12.5px; }
 .ns-field input {
   background: var(--input);

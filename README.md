@@ -78,8 +78,8 @@ theme renders. What it does to make that general:
 - Collapsed `<details>` are opened while editing.
 - Theme submodules on Codeberg (and other Forgejo/Gitea servers) and GitLab load too, as archives.
 
-`src/themes/` can add hints for a theme (menu labels, CSS to show content it hides), but no theme
-needs an adapter. `tests/theme-survey.test.ts` builds a new site with each theme in a folder of
+A theme's file in `src/themes/<id>.toml` can add hints for it (menu labels, CSS to show content it
+hides, components only its templates use), but no theme needs one. `tests/theme-survey.test.ts` builds a new site with each theme in a folder of
 theme repositories and checks the build, the editable pages and the components.
 
 Visual mode renders a page the way Zola does, so that it looks as built: links and images with
@@ -92,8 +92,10 @@ footnote where it's written, `{% raw %}` tags) is shown faintly and isn't part o
 ## New sites
 
 **Start a new site with a theme** on the start screen picks one of the themes in
-`src/themes/catalog.ts` (zola-yolk and apollo, the most used theme on GitHub), at the commit they were tested at: every page of each
-theme's demo site renders in Visual exactly as Zola builds it (`tests/e2e/visual-view.spec.ts`). The new site has
+the catalog (zola-yolk and apollo, the most used theme on GitHub; each a file in `src/themes/`), at
+the commit they were tested at: every page of each theme's demo site, and every component it
+offers pages, renders in Visual exactly as Zola builds it (`tests/e2e/visual-view.spec.ts`). The
+picker shows the last weekly check of each theme, per browser. The new site has
 the theme under `themes/`, the theme's demo config and content (pages that can't build in a
 browser, e.g. ones that load data from the web, are left out), and a GitHub Pages workflow. It's
 kept in this browser until **Publish to GitHub** (in Changes) creates a repository with it, the
@@ -145,8 +147,16 @@ npm run build      # static site in dist/
 `npm run test:e2e` makes a new site from each catalog theme as people do (GitHub answered from the
 fixtures), and compares every page in Visual with the same page as Zola builds it: the theme's
 markup around the content, and the content itself, apart from what only makes it editable
-(`tests/e2e/compare.ts`). It also checks every page can be edited. It runs in Chromium;
-`E2E_BROWSERS=chromium,firefox,webkit` for all three, `E2E_CAPTURE=<dir>` keeps what it compared.
+(`tests/e2e/compare.ts`). It also checks every page can be edited. Components the demo pages
+don't use get a page of their own (`tests/e2e/components.ts`): a call as the `/` menu makes it, or
+the theme file's `example` for it. It runs in Chromium; `E2E_BROWSERS=chromium,firefox,webkit` for
+all three, `E2E_CAPTURE=<dir>` keeps what it compared.
+
+On GitHub, pushes run `npm test` only. The themes are checked weekly (`.github/workflows/themes.yml`):
+each theme whose pinned commit, or newest commit, hasn't been checked runs in Chrome, Firefox and
+Safari, a job each in parallel (about 2 minutes each); nothing changed, nothing runs. Results go
+to the `theme-status` branch, which the theme picker reads. Run it by hand from the Actions tab,
+with "Check every theme" to check them all again.
 
 In development the app is on `localhost` and the sandbox on `127.0.0.1`, both from the same server.
 
@@ -189,7 +199,9 @@ App origin                                        Sandbox origin
   were in the file.
 - `src/frame/`: the Milkdown editor mounted at the marker, with node views that use the theme's
   rendered component markup, the `/` menu and popovers (in a shadow root).
-- `src/themes/`: per-theme adapters (edit-mode CSS, hidden components, menu hints).
+- `src/themes/`: a file per theme (`<id>.toml`: repository and pinned commit, Zola version,
+  edit-mode CSS, hidden components, menu hints, component examples for the tests) and the weekly
+  check's results (`status.ts`).
 - `src/sandbox/`, `public/sw.js`, `public/zdrafts-page.js`: the sandbox's side: the host page that
   keeps builds, the service worker that serves them, and the script every site page gets (its
   height, its links).
