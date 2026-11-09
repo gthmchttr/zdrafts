@@ -63,7 +63,8 @@ jobs:
       - name: Every page in Visual against View
         id: test
         continue-on-error: true
-        run: npx playwright test --grep "${{ matrix.theme.name }}: every page"
+        run: |
+          npx playwright test --grep "${{ matrix.theme.name }}: every page"
         env:
           E2E_BROWSERS: ${{ matrix.browser }}
       - name: Result
